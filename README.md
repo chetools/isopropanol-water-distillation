@@ -2,6 +2,8 @@
 
 A standalone, production-grade Streamlit web application for the rigorous design and simulation of an Isopropanol / Water distillation column.
 
+[![Deploy with Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/deploy?repository=chetools/isopropanol-water-distillation&branch=main&mainModule=app.py)
+
 ## ⚡️ Key Features
 
 1. **Ponchon-Savarit (H-x-y) Diagram**:
