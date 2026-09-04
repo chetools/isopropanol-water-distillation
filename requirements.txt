@@ -1,5 +1,9 @@
-streamlit>=1.35.0
-numpy>=1.24.0
-scipy>=1.10.0
-pandas>=2.0.0
-plotly>=5.18.0
+# Floors match the versions this application is tested against, and match
+# pyproject.toml.  They are not decorative: the UI uses width="stretch" on
+# charts, dataframes and buttons, st.columns(vertical_alignment=...) and
+# st.container(border=True), none of which exist in older Streamlit releases.
+streamlit>=1.63.0
+numpy>=2.5.2
+scipy>=1.18.1
+pandas>=3.0.5
+plotly>=7.0.0
