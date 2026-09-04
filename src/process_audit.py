@@ -4,7 +4,8 @@ import pandas as pd
 import streamlit as st
 
 from src.source_links import github_symbol_link
-from src.units import from_canonical, unit_options
+import src.ui as ui
+from src.units import from_canonical
 
 
 def _row(step, symbol, quantity, formula, substitution, value, unit, explanation):
@@ -85,18 +86,17 @@ def render_process_calculation_audit(column: dict) -> None:
                 "the NRTL equilibrium root; enthalpies from the common-reference property model; L and V from the "
                 "Ponchon–Savarit lever rule. The complete algorithm is linked in the next tab."
             )
-            selectors = st.columns(4)
-            comp_unit = selectors[0].selectbox("Composition unit", unit_options("composition"), key="audit_stage_comp_unit")
-            temp_unit = selectors[1].selectbox("Temperature unit", unit_options("temperature"), key="audit_stage_temp_unit")
-            h_unit = selectors[2].selectbox("Enthalpy unit", unit_options("enthalpy"), key="audit_stage_h_unit")
-            flow_unit = selectors[3].selectbox("Flow unit", unit_options("flow"), key="audit_stage_flow_unit")
-            stages["x"] = stages["x"].map(lambda v: from_canonical(v, "composition", comp_unit))
-            stages["y"] = stages["y"].map(lambda v: from_canonical(v, "composition", comp_unit))
-            stages["T_C"] = stages["T_C"].map(lambda v: from_canonical(v, "temperature", temp_unit))
-            stages["h_L"] = stages["h_L"].map(lambda v: from_canonical(v, "enthalpy", h_unit))
-            stages["H_V"] = stages["H_V"].map(lambda v: from_canonical(v, "enthalpy", h_unit))
-            stages["L"] = stages["L"].map(lambda v: from_canonical(v, "flow", flow_unit))
-            stages["V"] = stages["V"].map(lambda v: from_canonical(v, "flow", flow_unit))
+            # Units follow the sidebar display-units panel; converting whole
+            # columns at once rather than element-by-element.
+            comp_unit, temp_unit = ui.unit_for("composition"), ui.unit_for("temperature")
+            h_unit, flow_unit = ui.unit_for("enthalpy"), ui.unit_for("flow")
+            for name in ("x", "y"):
+                stages[name] = from_canonical(stages[name].to_numpy(), "composition", comp_unit)
+            stages["T_C"] = from_canonical(stages["T_C"].to_numpy(), "temperature", temp_unit)
+            for name in ("h_L", "H_V"):
+                stages[name] = from_canonical(stages[name].to_numpy(), "enthalpy", h_unit)
+            for name in ("L", "V"):
+                stages[name] = from_canonical(stages[name].to_numpy(), "flow", flow_unit)
             stages = stages.rename(columns={
                 "x": f"x_IPA [{comp_unit}]", "y": f"y_IPA [{comp_unit}]",
                 "T_C": f"temperature [{temp_unit}]", "h_L": f"h_L [{h_unit}]",

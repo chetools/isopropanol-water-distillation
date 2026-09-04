@@ -8,32 +8,47 @@ import numpy as np
 from scipy.optimize import brentq
 import src.thermo as th
 
+#: Composition samples used to locate the limiting (pinching) tie line.
+_PINCH_SAMPLES = 150
+
+
 def calc_min_reflux(x_D, x_B, z_F, P, h_F, subcooling_dT=0.0):
+    r"""Minimum reflux ratio from the limiting tie line, as one array expression.
+
+    At minimum reflux some tie line, extended, passes through the rectifying
+    difference point.  Extending the tie line through :math:`(x, h_L)` and
+    :math:`(y, H_V)` to the distillate composition gives the intercept
+
+    .. math:: Q'_{int}(x)=h_L+\frac{H_V-h_L}{y-x}\,(x_D-x)
+
+    and the *highest* such intercept is the limiting one, because any lower
+    difference point would put a tie line on the wrong side of the operating
+    line.  The reflux ratio then follows from the definition of the difference
+    point, :math:`R=(Q'_D-H_{V1})/(H_{V1}-h_{reflux})`.
+
+    Sampling every candidate composition at once turns the search into the
+    formula above evaluated on an array, followed by one maximum.
+    """
     T_D, _ = th.bubble_point(x_D, P)
     h_D = th.h_liquid_mix(x_D, T_D)
-    T_reflux = T_D - subcooling_dT
-    h_reflux = th.h_liquid_mix(x_D, T_reflux)
+    h_reflux = th.h_liquid_mix(x_D, T_D - subcooling_dT)
     T_V1, _ = th.dew_point(x_D, P)
     H_V1 = th.h_vapor_mix(x_D, T_V1)
-    xs = np.linspace(max(0.01, x_B), min(0.665, x_D - 0.005), 150)
-    Q_prime_intersections = []
-    for x in xs:
-        T_b, y = th.bubble_point(x, P)
-        if abs(y - x) < 1e-5:
-            continue
-        h_L = th.h_liquid_mix(x, T_b)
-        H_V = th.h_vapor_mix(y, T_b)
-        Q_int = h_L + ((H_V - h_L) / (y - x)) * (x_D - x)
-        Q_prime_intersections.append(Q_int)
-    if len(Q_prime_intersections) == 0:
-        Q_prime_D_min = H_V1 + 10.0
-    else:
-        Q_prime_D_min = float(np.max(Q_prime_intersections))
+
+    x_azeo, _ = th.find_azeotrope(P)
+    x = np.linspace(max(0.01, x_B), min(x_azeo - 0.002, x_D - 0.005), _PINCH_SAMPLES)
+    T_b, y = th.bubble_point_curve(x, P)                     # one solve, every sample
+    h_L = th.h_liquid_mix(x, T_b)
+    H_V = th.h_vapor_mix(y, T_b)
+
+    tie_slope = np.where(np.abs(y - x) < 1e-5, np.nan, y - x)
+    Q_int = h_L + ((H_V - h_L) / tie_slope) * (x_D - x)      # the equation above
+    Q_prime_D_min = float(np.nanmax(Q_int)) if np.any(np.isfinite(Q_int)) else float(H_V1 + 10.0)
+
     denom = H_V1 - h_reflux
     if denom <= 0:
         denom = H_V1 - h_D
-    R_min = max(0.05, (Q_prime_D_min - H_V1) / denom)
-    return float(R_min), float(Q_prime_D_min)
+    return float(max(0.05, (Q_prime_D_min - H_V1) / denom)), Q_prime_D_min
 
 def calc_min_stages(x_D, x_B, P):
     x_curr = x_D

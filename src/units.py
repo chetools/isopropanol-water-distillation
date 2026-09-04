@@ -1,6 +1,17 @@
-"""Engineering-unit conversions for UI display; solver storage remains canonical SI."""
+"""Engineering-unit conversions for UI display; solver storage remains canonical SI.
+
+Conversions are array-aware, so a whole curve converts in one expression
+rather than a comprehension over its points.  The solver never sees these
+units: everything inside ``src/`` is mol/s, Pa, K, kJ/mol and metres.
+"""
 
 from dataclasses import dataclass
+
+import numpy as np
+
+#: Molar masses used by the mole-to-weight composition bases [g/mol].
+MW_IPA = 60.096
+MW_WATER = 18.015
 
 
 @dataclass(frozen=True)
@@ -81,19 +92,34 @@ def unit_options(quantity: str) -> list[str]:
     return list(UNITS[quantity])
 
 
-def from_canonical(value: float, quantity: str, unit: str) -> float:
+def from_canonical(value, quantity: str, unit: str):
+    """Convert a canonical SI value -- scalar or array -- to display units.
+
+    Accepting arrays lets callers convert a whole curve in one expression
+    (``from_canonical(vle["x"], "composition", unit)``) instead of looping
+    over points.  A scalar in returns a scalar out, so existing formatting
+    code is unaffected.
+    """
+    value = np.asarray(value, dtype=float)
     if quantity == "composition" and unit in {"weight fraction", "weight %"}:
-        x = float(value)
-        weight = x * 60.096 / (x * 60.096 + (1.0 - x) * 18.015)
-        return weight * (100.0 if unit == "weight %" else 1.0)
-    return UNITS[quantity][unit].from_canonical(float(value))
+        mass_ipa = value * MW_IPA
+        weight = mass_ipa / (mass_ipa + (1.0 - value) * MW_WATER)
+        converted = weight * (100.0 if unit == "weight %" else 1.0)
+    else:
+        converted = UNITS[quantity][unit].from_canonical(value)
+    return converted.item() if converted.ndim == 0 else converted
 
 
-def to_canonical(value: float, quantity: str, unit: str) -> float:
+def to_canonical(value, quantity: str, unit: str):
+    """Convert a display value -- scalar or array -- back to canonical SI."""
+    value = np.asarray(value, dtype=float)
     if quantity == "composition" and unit in {"weight fraction", "weight %"}:
-        weight = float(value) / (100.0 if unit == "weight %" else 1.0)
-        return (weight / 60.096) / (weight / 60.096 + (1.0 - weight) / 18.015)
-    return UNITS[quantity][unit].to_canonical(float(value))
+        weight = value / (100.0 if unit == "weight %" else 1.0)
+        moles_ipa = weight / MW_IPA
+        converted = moles_ipa / (moles_ipa + (1.0 - weight) / MW_WATER)
+    else:
+        converted = UNITS[quantity][unit].to_canonical(value)
+    return converted.item() if converted.ndim == 0 else converted
 
 
 def default_unit(quantity: str) -> str:

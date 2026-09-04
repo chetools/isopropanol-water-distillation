@@ -1,0 +1,14 @@
+# Normalise the repository on LF.
+#
+# History previously diverged purely by line endings (a CRLF-checked-in copy and
+# an LF one), producing commits with identical content but different hashes.
+# Pinning eol=lf stops that recurring, and Streamlit Community Cloud runs Linux,
+# so LF is the natural target.
+* text=auto eol=lf
+
+# Binary payloads must never be line-ending converted.
+*.npz binary
+*.png binary
+*.jpg binary
+*.gz binary
+*.parquet binary

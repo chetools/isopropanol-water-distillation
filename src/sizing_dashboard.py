@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from src.sizing import SizingBasis, calculate_sizing
+import src.ui as ui
 from src.source_links import github_symbol_link
 from src.units import from_canonical, to_canonical, unit_options
 
@@ -24,9 +25,13 @@ def _input(container, label, quantity, key, minimum, maximum, value, step, slide
 
 
 def _metric(container, label, value, quantity, key, help_text, digits=4, preferred=None):
-    options = unit_options(quantity)
-    index = options.index(preferred) if preferred in options else 0
-    unit = container.selectbox(f"{label} unit", options, index=index, key=f"{key}_unit")
+    """Display a computed result in the reader's chosen unit.
+
+    Results follow the sidebar display-units panel; only the *inputs* below
+    keep their own selector, because choosing the unit is part of entering the
+    value there.
+    """
+    unit = ui.unit_for(quantity)
     shown = from_canonical(value, quantity, unit)
     container.metric(label, f"{shown:.{digits}g} {unit}", help=help_text)
 
@@ -83,17 +88,28 @@ def render_sizing_dashboard(column: dict) -> None:
     )
     result = calculate_sizing(column, basis)
 
-    dims = st.columns(6)
-    labels = [
-        ("Diameter", result['diameter_m'], "length", "diameter", f"stage {result['governing_stage']} governs", "m"),
-        ("Tangent height", result['tangent_height_m'], "length", "height", f"{column['tray_count']} trays", "m"),
-        ("Shell thickness", result['shell_thickness_mm'] / 1000.0, "length", "thickness", "preliminary pressure shell", "mm"),
-        ("Condenser area", result['condenser_area_m2'], "area", "condenser_area", "Q/(U·LMTD)", "m²"),
-        ("Reboiler area", result['reboiler_area_m2'], "area", "reboiler_area", "Q/(U·LMTD)", "m²"),
-        ("Fixed capital", result["fixed_capital_usd"], "money", "fixed_capital", "screening estimate", "MUSD"),
-    ]
-    for slot, (label, value, quantity, key, help_text, preferred) in zip(dims, labels):
-        _metric(slot, label, value, quantity, key, help_text, preferred=preferred)
+    # Three across rather than six: the cost strings need the width, and a
+    # truncated capital figure is worse than a second row.
+    geometry = st.columns(3)
+    _metric(geometry[0], "Diameter", result['diameter_m'], "length", "diameter",
+            f"stage {result['governing_stage']} carries the governing vapour load")
+    _metric(geometry[1], "Tangent height", result['tangent_height_m'], "length", "height",
+            f"{column['tray_count']} trays plus disengagement, sump and allowances")
+    # Shell thickness is conventionally quoted in millimetres and is a few mm,
+    # so it keeps its own unit rather than following the global length choice.
+    geometry[2].metric(
+        "Shell thickness", f"{result['shell_thickness_mm']:.4g} mm",
+        help="Preliminary pressure-shell screen only; heads, wind, seismic, "
+             "nozzles and code minimums are excluded.",
+    )
+
+    equipment = st.columns(3)
+    _metric(equipment[0], "Condenser area", result['condenser_area_m2'], "area",
+            "condenser_area", "A = |Q_C| / (U · LMTD)")
+    _metric(equipment[1], "Reboiler area", result['reboiler_area_m2'], "area",
+            "reboiler_area", "A = |Q_R| / (U · LMTD)")
+    _metric(equipment[2], "Fixed capital", result["fixed_capital_usd"], "money",
+            "fixed_capital", "Class-4 screening estimate, roughly ±30–50%")
 
     cost_cols = st.columns(4)
     _metric(cost_cols[0], "Annual steam", result["steam_cost_usd_y"], "money_rate", "steam_cost", "reboiler duty × operating time × tariff")

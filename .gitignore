@@ -8,3 +8,9 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Editor/tooling local config
+.claude/
+
+# Test cache
+.pytest_cache/
