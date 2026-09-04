@@ -1,15 +1,61 @@
 """Expandable, engineering-oriented tutorial content for the Streamlit UI."""
 
+import ast
+from html import escape
+from pathlib import Path
+
 import streamlit as st
+
+from src.engineering_diagrams import (
+    azeotrope_svg,
+    flash_algorithm_svg,
+    flash_balance_svg,
+    mccabe_balance_svg,
+    mccabe_stagewalk_svg,
+    mesh_stage_svg,
+    model_map_svg,
+    ponchon_stagewalk_svg,
+    safety_layers_svg,
+    sizing_workflow_svg,
+    whole_column_balance_svg,
+)
 
 
 def _eq(text: str) -> None:
     st.latex(text)
 
 
-def _diagram(title: str, body: str) -> None:
-    st.markdown(f"**{title}**")
-    st.code(body, language=None)
+def _vector_diagram(svg: str) -> None:
+    """Render a responsive vector engineering diagram."""
+    st.markdown(svg, unsafe_allow_html=True)
+
+
+def _source_toggle(label: str, relative_path: str, symbol: str) -> None:
+    """Link and show the exact implementation lines for a named Python symbol."""
+    repo_root = Path(__file__).resolve().parent.parent
+    path = repo_root / relative_path
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    name = symbol.rsplit(".", 1)[-1]
+    matches = [
+        node for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == name
+    ]
+    if not matches:
+        return
+    node = matches[0]
+    start, end = node.lineno, node.end_lineno or node.lineno
+    lines = source.splitlines()[start - 1:end]
+    numbered = "\n".join(f"{line_no:4d}  {line}" for line_no, line in enumerate(lines, start))
+    url = f"https://github.com/chetools/isopropanol-water-distillation/blob/main/{relative_path}#L{start}-L{end}"
+    st.markdown(f"[Open **{label}** in GitHub — `{relative_path}` lines {start}–{end}]({url})")
+    st.markdown(
+        f"""<details style="margin:.35rem 0 1rem;border:1px solid #334155;border-radius:10px;background:#0b1324">
+<summary style="cursor:pointer;padding:.75rem 1rem;color:#7dd3fc;font-weight:700">Toggle fully visible code: {escape(label)}</summary>
+<pre style="max-height:520px;overflow:auto;margin:0;padding:1rem;background:#07101f;color:#dbeafe;font-size:12px;line-height:1.5;white-space:pre;tab-size:4"><code>{escape(numbered)}</code></pre>
+</details>""",
+        unsafe_allow_html=True,
+    )
 
 
 def render_tutorial() -> None:
@@ -27,13 +73,7 @@ def render_tutorial() -> None:
             "model at low-to-moderate pressure. It computes γ–φ equilibrium with liquid non-ideality from NRTL, "
             "ideal vapor behavior, and negligible pressure drop."
         )
-        _diagram("Information flow", """Feed: F, z_F, P, h_F
-        │
-        ├── VLE: gamma_i(NRTL,T,x) · P_i^sat(T) ──> y_i, T_bubble
-        ├── Enthalpy: h(x,T), H(y,T)              ──> q and tie-line energy
-        └── Specifications: x_D, x_B, R           ──> stages, duties, internal flows
-                                                        │
-                                                        └── hydraulics / diameter / height / cost / safeguards""")
+        _vector_diagram(model_map_svg())
         st.markdown("**Core assumptions and their consequences**")
         st.markdown(
             "- Equilibrium stages: vapor and liquid leaving each ideal stage are at the same T, P and chemical potential. "
@@ -48,15 +88,7 @@ basis because the UI uses mol/s. Streams crossing the envelope are feed
 $F,z_F,h_F$, distillate $D,x_D,h_D$, bottoms $B,x_B,h_B$, condenser heat
 $Q_C$ leaving, and reboiler heat $Q_R$ entering.
 """)
-        _diagram("Whole-column balance envelope", """                         Q_C out
-                            ↑
-             D, x_D, h_D ← [ CONDENSER ]
-                              │ reflux
-F, z_F, h_F ───────────────> [  COLUMN  ]
-                              │
-             B, x_B, h_B ← [ REBOILER  ]
-                            ↑
-                         Q_R in""")
+        _vector_diagram(whole_column_balance_svg())
         st.markdown("**Step 2 — close independent balances before solving stages.**")
         _eq(r"F=D+B")
         _eq(r"Fz_F=Dx_D+Bx_B")
@@ -74,6 +106,9 @@ balances, one energy balance, two summation constraints, and phase-equilibrium
 relations. Temperatures, compositions and internal flows are therefore solved
 together; a plotted staircase alone is not a complete MESH solution.
 """)
+        st.markdown("#### Exact implementation")
+        _source_toggle("degree-of-freedom specification closure", "src/dof_manager.py", "DOFManager.recompute")
+        _source_toggle("outer column material and energy solution", "src/column.py", "solve_design_column")
 
     with st.expander("2 · Equilibrium relationship and NRTL derivation", expanded=False):
         st.markdown("At vapor–liquid equilibrium, each component has equal fugacity in both phases.")
@@ -117,21 +152,20 @@ contributes excess enthalpy. Gibbs–Helmholtz gives
         _eq(r"h^E=-RT^2\left[\frac{\partial(g^E/RT)}{\partial T}\right]_{P,\mathbf{x}}=-RT^2\sum_i x_i\frac{\partial\ln\gamma_i}{\partial T}")
         st.markdown("That term belongs in the saturated-liquid enthalpy curve used by Ponchon–Savarit; omitting it makes the VLE and energy model internally inconsistent.")
         st.markdown("For this binary, the model uses B₁₂=20.06 K, B₂₁=832.98 K and α=0.326 (component ordering must remain consistent with the parameter source). The code evaluates γ(T,x) at every equilibrium point; therefore y(x) is curved and an azeotrope can occur where y=x.")
-        _diagram("Azeotrope diagnostic", """relative volatility alpha_12 = (y_1/x_1) / (y_2/x_2)
-alpha_12 > 1  : IPA enriches in vapor
-alpha_12 = 1  : y_1 = x_1  -> azeotrope / no composition driving force
-alpha_12 < 1  : water enriches in vapor""")
+        _vector_diagram(azeotrope_svg())
         st.markdown("Check parameter provenance, temperature range, units, and whether parameters were fitted to γ–φ data before using them outside their regression range.")
+        st.markdown("#### Exact implementation")
+        _source_toggle("NRTL activity coefficients", "src/thermo.py", "nrtl_gamma")
+        _source_toggle("NRTL excess enthalpy", "src/thermo.py", "excess_enthalpy")
+        _source_toggle("bubble-point root and equilibrium vapor", "src/thermo.py", "bubble_point")
+        _source_toggle("dew-point branch root", "src/thermo.py", "dew_point")
+        _source_toggle("azeotrope root", "src/thermo.py", "find_azeotrope")
 
     with st.expander("3 · Flash calculations: ideal, non-ideal, isothermal, isobaric, and adiabatic", expanded=False):
         st.markdown("A flash is one equilibrium contact. Let feed F split into L and V, with β=V/F. Component balances give")
         _eq(r"z_i=(1-\beta)x_i+\beta y_i,\qquad y_i=K_ix_i")
         _eq(r"x_i=\frac{z_i}{1+\beta(K_i-1)},\qquad \sum_i\frac{z_i(K_i-1)}{1+\beta(K_i-1)}=0")
-        _diagram("Flash balance envelope", """                   Q (zero for adiabatic)
-                   ↓
-F, z_i, h_F ---> [ FLASH ] ---> V=beta F, y_i, H
-                    │
-                    └----------> L=(1-beta)F, x_i, h""")
+        _vector_diagram(flash_balance_svg())
         st.markdown(r"""
 **Deriving Rachford–Rice rather than quoting it.** Start with
 $Fz_i=Lx_i+Vy_i$. Divide by $F$, substitute $L/F=1-\beta$ and $y_i=K_ix_i$:
@@ -148,11 +182,7 @@ if both are positive it is vapor; opposite signs indicate a two-phase root.
         st.markdown("**Ideal isothermal–isobaric flash.** Use Kᵢ=Pᵢˢᵃᵗ(T)/P, solve Rachford–Rice, then recover x and y.\n\n**Non-ideal isothermal–isobaric flash.** Iterate Kᵢ←γᵢ(x,T)Pᵢˢᵃᵗ(T)/(φᵢP), re-solve Rachford–Rice, and converge both K and composition. Damping prevents oscillation near azeotropes.\n\n**Constant-T flash.** T and P are known; unknowns are β, x, y. Use the two equations above.\n\n**Constant-P bubble/dew calculation.** Bubble point solves ΣxᵢγᵢPᵢˢᵃᵗ(T)=P. Dew point solves ΣyᵢP/(γᵢPᵢˢᵃᵗ(T))=1 while updating x and γ.\n\n**Adiabatic flash.** Add the enthalpy balance Q=0:")
         _eq(r"Fh_F=V H(T,\mathbf y)+L h(T,\mathbf x)")
         st.markdown("Now T is unknown. An outer root solver varies T; at each trial T, the inner non-ideal flash supplies β, x, y, h and H. This is the same energy-balance logic that makes Ponchon–Savarit more general than constant-molar-overflow stepping.")
-        _diagram("Robust non-ideal adiabatic flash algorithm", """guess T -> calculate K_i(T,x) -> solve Rachford-Rice for beta
-   ^                                      │
-   │                                      v
-root on residual Fh_F - [V H + L h] <- update x,y,gamma
-stop only when material, equilibrium, and energy residuals all converge""")
+        _vector_diagram(flash_algorithm_svg())
         st.markdown(r"""
 **Five flash specifications and their unknowns**
 
@@ -173,16 +203,19 @@ P while the inner composition loop closes equilibrium. Never update T, P,
 $\beta$, and $\gamma$ with an unguarded simultaneous fixed-point iteration near
 an azeotrope; bracket the outer scalar variable and damp the inner activity update.
 """)
+        st.markdown("#### Exact implementation")
+        _source_toggle("Rachford–Rice root with phase tests", "src/flash.py", "rachford_rice")
+        _source_toggle("ideal TP flash", "src/flash.py", "ideal_tp_flash")
+        _source_toggle("non-ideal NRTL TP flash", "src/flash.py", "nonideal_tp_flash")
+        _source_toggle("fixed-P bubble-temperature flash", "src/flash.py", "bubble_t_fixed_p")
+        _source_toggle("fixed-P dew-temperature flash", "src/flash.py", "dew_t_fixed_p")
+        _source_toggle("fixed-T specified-vapor-fraction pressure flash", "src/flash.py", "tvf_flash")
+        _source_toggle("adiabatic PH flash", "src/flash.py", "adiabatic_ph_flash")
 
     with st.expander("4 · McCabe–Thiele: derivation, stepping, and limitations", expanded=False):
         st.markdown("McCabe–Thiele is a graphical binary-stage method. It replaces the full energy treatment with **constant molar overflow (CMO)**: comparable latent heats, negligible heat loss, negligible pressure drop, and nearly constant L and V within each section.")
         st.markdown("For a total condenser and reflux ratio R=L₀/D, the rectifying-section total/component balances give")
-        _diagram("Rectifying-section envelope", """       V_(n+1), y_(n+1) enters from below
-                     ↑
-                [ trays 1..n ] ---> D, x_D
-                     ↓
-          L_n, x_n leaves downward
-Envelope balance: V y_(n+1) = L x_n + D x_D""")
+        _vector_diagram(mccabe_balance_svg())
         _eq(r"V=L+D,\quad L=RD,\quad y_{n+1}=\frac{R}{R+1}x_n+\frac{x_D}{R+1}")
         st.markdown(r"""
 The derivation is direct: total balance gives $V=L+D$; component balance gives
@@ -192,12 +225,6 @@ Both follow from the envelope; neither is a fitted line.
 """)
         st.markdown("For the stripping section, a balance below tray m yields")
         _eq(r"y_{m+1}=\frac{\bar L}{\bar V}x_m-\frac{B}{\bar V}x_B")
-        _diagram("Stripping-section envelope", """          Lbar_m, x_m enters from above
-                     ↓
-                [ trays m..N ]
-                     ↑
-       Vbar_(m+1), y_(m+1) leaves upward ---> B, x_B leaves bottom
-Envelope balance: Lbar x_m = Vbar y_(m+1) + B x_B""")
         st.markdown("Solve the displayed component balance for vapor composition to obtain the stripping line. It must pass through (x_B,x_B) for a partial reboiler counted as an equilibrium stage.")
         st.markdown("The feed condition is encoded by q, the liquid fraction after an isenthalpic flash at column pressure. Combining feed and section balances gives the q-line:")
         _eq(r"y=\frac{q}{q-1}x-\frac{z_F}{q-1}")
@@ -208,22 +235,17 @@ the locus of admissible feed-tray intersections is the q-line. Limiting cases:
 $q=1$ vertical saturated-liquid line, $q=0$ horizontal saturated-vapor line,
 $0<q<1$ two-phase feed, $q>1$ subcooled liquid, and $q<0$ superheated vapor.
 """)
-        _diagram("One ideal-stage construction", """equilibrium curve y*=f(x)
-       horizontal: operating line -> equilibrium curve (vapor leaving tray)
-       vertical:   equilibrium curve -> operating line (liquid leaving tray)
-repeat from x_D down to x_B; switch at q-line intersection""")
+        _vector_diagram(mccabe_stagewalk_svg())
         st.markdown("At total reflux R→∞, operating lines approach y=x and the staircase gives N_min. At minimum reflux, the operating line pinches the equilibrium curve and N→∞. Practical R is selected between these limits after economics. **Do not use CMO blindly** for strongly non-ideal systems, large temperature spans, subcooled reflux, non-saturated feeds, or appreciable pressure drop; this app shows non-CMO flow profiles for that reason.")
+        st.markdown("#### Exact implementation")
+        _source_toggle("minimum reflux pinch search", "src/column.py", "calc_min_reflux")
+        _source_toggle("total-reflux minimum-stage stepping", "src/column.py", "calc_min_stages")
+        _source_toggle("McCabe operating lines and staircase coordinates", "src/column.py", "solve_design_column")
 
     with st.expander("5 · Ponchon–Savarit: enthalpy-composition construction", expanded=False):
         st.markdown("Ponchon–Savarit retains the same equilibrium tie-lines but also carries molar enthalpy. Plot saturated-liquid h(x) and saturated-vapor H(y) at the operating pressure. Each tie-line joins the paired equilibrium liquid and vapor states.")
         _eq(r"Fh_F+D h_D+B h_B=Q_C+Q_R")
-        _diagram("Single equilibrium-stage MESH envelope", """L_(n-1), x_(n-1), h_(n-1) ↓     ↑ V_n, y_n, H_n
-                               [ STAGE n ]
-L_n, x_n, h_n ↓                         ↑ V_(n+1), y_(n+1), H_(n+1)
-
-total:    L_(n-1)+V_(n+1)=L_n+V_n
-component:L_(n-1)x_(n-1)+V_(n+1)y_(n+1)=L_n x_n+V_n y_n
-energy:   L_(n-1)h_(n-1)+V_(n+1)H_(n+1)=L_n h_n+V_n H_n""")
+        _vector_diagram(mesh_stage_svg())
         st.markdown(r"""
 **Step 1 — construct thermodynamically paired curves.** For each liquid $x$,
 solve its bubble temperature and equilibrium vapor $y$. Evaluate $h(x,T)$ and
@@ -258,30 +280,16 @@ error. Unlike McCabe–Thiele, changing latent heat, heat of mixing, subcooling,
 and changing L/V appear explicitly rather than being buried in CMO.
 """)
         st.markdown("Define the rectifying difference point Δ_D as the intersection implied by condenser/reflux balances and the stripping difference point Δ_B from reboiler/bottoms balances. A line from Δ_D through the vapor point on a tie-line locates the liquid point for a rectifying stage; the analogous line through Δ_B handles stripping stages.")
-        _diagram("Ponchon–Savarit stage walk", r"""H (enthalpy)
-^   saturated vapor curve H(y)      ΔD o
-|      / tie-line ---------------------\
-|     /                                 \  rectifying operating line
-|  h(x) saturated liquid curve            o liquid stage point
-|                              ΔB o
-+------------------------------------------------> IPA mole fraction
-Move tie-line <-> difference-point line until the feed tie-line is reached.""")
+        _vector_diagram(ponchon_stagewalk_svg())
         st.markdown("This method naturally handles different latent heats, heat of mixing, feed enthalpy, subcooled reflux, and section-wise changing L/V. It still assumes equilibrium stages and a specified pressure; pressure profiles and tray efficiencies require additional models.")
+        st.markdown("#### Exact implementation")
+        _source_toggle("Ponchon–Savarit difference points, rays, roots, and lever rules", "src/column.py", "solve_design_column")
+        _source_toggle("saturated liquid mixture enthalpy", "src/thermo.py", "h_liquid_mix")
+        _source_toggle("saturated vapor mixture enthalpy", "src/thermo.py", "h_vapor_mix")
 
     with st.expander("6 · From calculated stages to column diameter, height, utilities, and economics", expanded=False):
         st.markdown("**First scale the process.** Convert the simulator feed basis to kmol/h, calculate top and bottom vapor/liquid loads, and use the maximum vapor volumetric rate for diameter. Geometry is not determined by stage count alone.")
-        _diagram("Automated sizing chain used on this dashboard", """maximum stage V,T,y + P ---> vapor density and volume flow
-                                    |
-                                    v
-capacity factor + densities ---> flood velocity ---> design velocity
-                                    |
-                                    v
-active area + downcomer allowance ---> diameter
-
-actual trays + spacing + end allowances ---> tangent height
-Q_C,Q_R + U + LMTD ---------------------> exchanger areas
-shell mass + trays + exchangers --------> purchased and installed cost
-duties + hours + utility tariffs -------> OPEX and TAC""")
+        _vector_diagram(sizing_workflow_svg())
         st.markdown("**Step 1 — governing vapor load.** Inspect every calculated stage rather than assuming the top tray governs. Convert the largest molar vapor rate to actual volumetric rate at that stage’s T, P and vapor molecular weight.")
         _eq(r"\dot V_{vol}=\frac{\dot n_V ZRT}{P},\qquad A_{active}=\frac{\dot V_{vol}}{u_{design}},\qquad D_c=\sqrt{\frac{4A_{total}}{\pi}}")
         st.markdown("**Step 2 — flood velocity and diameter.** Estimate densities, obtain an appropriate tray capacity factor C, calculate Souders–Brown flood velocity, multiply by the selected flood fraction, divide vapor volume by design velocity for active area, and divide by (1−downcomer fraction) for total area.")
@@ -307,22 +315,14 @@ utility tariffs, metallurgy, pressure class and site factors before making a
 capital decision.
 """)
         st.markdown("Increasing R lowers stage count but raises diameter, condenser duty and reboiler duty. Evaluate a small R sweep above R_min and select the minimum TAC subject to controllability and operability. Obtain current vendor quotes and utility rates; all cost correlations are location, material, pressure, index year, and capacity-range dependent.")
+        st.markdown("#### Exact implementation and independent reproduction")
+        _source_toggle("all 37 sizing and economic calculation steps", "src/sizing.py", "calculate_sizing")
+        _source_toggle("generated dependency-free Python calculation", "src/sizing.py", "build_sizing_reproduction_script")
+        _source_toggle("unit-aware sizing dashboard and ledger", "src/sizing_dashboard.py", "render_sizing_dashboard")
 
     with st.expander("7 · Safe operation, safeguards, and what this model does not certify", expanded=False):
         st.markdown("IPA is a **highly flammable liquid/vapor**; IPA/water vapor can create a flammable atmosphere. Treat this app’s calculated T, P, compositions and duties as inputs to a formal design review—not operating limits.")
-        _diagram("Layered protection concept", """basic control: reflux, reboiler heat, pressure, level
-        -> alarms + trained response
-        -> interlocks / shutdown: high P, low reflux, low bottoms level, high reboiler temperature
-        -> relief to a properly designed disposal system
-        -> containment, ventilation, ignition control, emergency response""")
-        _diagram("Normal control structure and upset propagation", """pressure controller ---> condenser duty / vent system
-reflux-drum level -------> distillate flow
-column base level -------> bottoms flow
-temperature/composition -> reboiler duty or reflux ratio
-
-loss of cooling -> pressure rises -> alarm -> cut heat -> shutdown -> relief (last resort)
-loss of reflux  -> top temperature rises, separation lost -> alarm/interlock
-low base level  -> reboiler dry-out risk -> low-low trip removes heat""")
+        _vector_diagram(safety_layers_svg())
         st.markdown(r"""
 **Safeguard derivation starts with inventory and energy, not a checklist.** For
 each deviation, identify (1) initiating cause, (2) how mass or energy
@@ -347,6 +347,11 @@ then design inlet/outlet pressure losses and disposal—not just valve orifice.
             "- Protect reboilers from low liquid level and dry firing; protect condensers against cooling-water loss; verify reflux pump NPSH and minimum flow.\n"
             "- Establish operating envelopes for pressure, differential pressure, reflux ratio, temperatures, level, and composition. Trends help identify flooding (rising ΔP/entrainment), weeping (lost efficiency), foaming, or a developing heat-balance upset.\n"
             "- Write start-up, shutdown, sampling, maintenance, line-breaking, confined-space, and emergency procedures. Use the current safety data sheet and local regulations."
+        )
+        st.markdown(
+            "**Implementation boundary:** the app deliberately does not calculate relief-orifice size, SIL, hazardous-area "
+            "classification, or safe operating limits. Those require scenario-specific design data and formal review; "
+            "there is therefore no software line presented as a safety certification algorithm."
         )
 
     with st.expander("8 · Assumptions, validation checklist, and references", expanded=False):
@@ -375,3 +380,7 @@ VLE. A visually smooth curve is not validation.
 start-up and upset conditions. Economics must state currency, cost-index date,
 location, installation scope and uncertainty class.
 """)
+        st.markdown("#### Audit, display, and unit-conversion implementation")
+        _source_toggle("process KPI equation and substitution ledger", "src/process_audit.py", "build_process_ledger")
+        _source_toggle("canonical-to-selected engineering-unit conversion", "src/units.py", "from_canonical")
+        _source_toggle("selected-to-canonical engineering-unit conversion", "src/units.py", "to_canonical")
