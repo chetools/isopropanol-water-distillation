@@ -3,7 +3,8 @@
 import pandas as pd
 import streamlit as st
 
-from src.sizing import SizingBasis, build_sizing_reproduction_script, calculate_sizing
+from src.sizing import SizingBasis, calculate_sizing
+from src.source_links import github_symbol_link
 from src.units import from_canonical, to_canonical, unit_options
 
 
@@ -100,47 +101,35 @@ def render_sizing_dashboard(column: dict) -> None:
     _metric(cost_cols[2], "Annual OPEX", result["annual_opex_usd_y"], "money_rate", "opex", "steam + cooling + maintenance")
     _metric(cost_cols[3], "Total annualized cost", result["tac_usd_y"], "money_rate", "tac", "annualized capital + OPEX")
 
-    with st.expander("Complete calculation ledger and independent Python reproduction", expanded=False):
+    with st.expander("Complete calculation ledger and Python code links", expanded=False):
         st.markdown(
             "The ledger exposes **every intermediate value used to produce the displayed sizing and cost outputs**. "
             "The substitution column uses more digits than the KPI cards so independent calculations do not inherit display-rounding error."
         )
         audit = pd.DataFrame(result["calculation_steps"])
-        ledger_tab, python_tab = st.tabs(["37-step numerical ledger", "Dependency-free Python"])
-        with ledger_tab:
-            displayed = audit.copy()
-            displayed["Value"] = displayed["Value"].map(lambda value: f"{value:.10g}")
-            st.dataframe(
-                displayed,
-                hide_index=True,
-                width="stretch",
-                column_config={
-                    "Step": st.column_config.NumberColumn(width="small", format="%d"),
-                    "Symbol": st.column_config.TextColumn(width="small"),
-                    "Quantity": st.column_config.TextColumn(width="medium"),
-                    "Formula": st.column_config.TextColumn(width="large"),
-                    "Numerical substitution": st.column_config.TextColumn(width="large"),
-                    "Value": st.column_config.TextColumn(width="medium"),
-                    "Unit": st.column_config.TextColumn(width="small"),
-                    "Basis / provenance": st.column_config.TextColumn(width="large"),
-                },
-            )
-            st.download_button(
-                "Download complete calculation ledger (CSV)",
-                audit.to_csv(index=False).encode("utf-8"),
-                "column_sizing_cost_complete_ledger.csv",
-                "text/csv",
-            )
-        with python_tab:
-            script = build_sizing_reproduction_script(column, basis)
-            st.markdown(
-                "This generated script embeds the current stage loads and every dashboard assumption, uses only "
-                "Python's standard library, and prints the unrounded intermediate and final results."
-            )
-            st.download_button(
-                "Download exact hand-coded Python reproduction",
-                script.encode("utf-8"),
-                "reproduce_column_sizing_and_cost.py",
-                "text/x-python",
-            )
-            st.code(script, language="python", line_numbers=True)
+        displayed = audit.copy()
+        displayed["Value"] = displayed["Value"].map(lambda value: f"{value:.10g}")
+        st.dataframe(
+            displayed,
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Step": st.column_config.NumberColumn(width="small", format="%d"),
+                "Symbol": st.column_config.TextColumn(width="small"),
+                "Quantity": st.column_config.TextColumn(width="medium"),
+                "Formula": st.column_config.TextColumn(width="large"),
+                "Numerical substitution": st.column_config.TextColumn(width="large"),
+                "Value": st.column_config.TextColumn(width="medium"),
+                "Unit": st.column_config.TextColumn(width="small"),
+                "Basis / provenance": st.column_config.TextColumn(width="large"),
+            },
+        )
+        st.download_button(
+            "Download complete calculation ledger (CSV)",
+            audit.to_csv(index=False).encode("utf-8"),
+            "column_sizing_cost_complete_ledger.csv",
+            "text/csv",
+        )
+        st.markdown("#### Python code")
+        st.markdown(github_symbol_link("37-step sizing and economics calculation", "src/sizing.py", "calculate_sizing"))
+        st.markdown(github_symbol_link("unit-aware sizing dashboard", "src/sizing_dashboard.py", "render_sizing_dashboard"))

@@ -96,10 +96,11 @@ def plot_xy(vle_data, col_result, z_F, composition_unit="mole fraction"):
     stair_x = mccabe.get('staircase_x', [])
     stair_y = mccabe.get('staircase_y', [])
     if len(stair_x) > 0:
+        mccabe_stage_count = mccabe.get('stage_count', col_result['total_stages'])
         fig.add_trace(go.Scatter(
             x=convert_x(stair_x), y=convert_x(stair_y),
             mode='lines',
-            name=f"Staircase ({col_result['total_stages']} Stages)",
+            name=f"CMO staircase ({mccabe_stage_count} theoretical stages)",
             line=dict(color='#ef4444', width=2.5)
         ))
     
@@ -208,6 +209,7 @@ def plot_ponchon_savarit(vle_data, col_result, z_F, h_F, composition_unit="mole 
     cx = lambda value: from_canonical(value, "composition", composition_unit)
     ch = lambda value: from_canonical(value, "enthalpy", enthalpy_unit)
     xs = [cx(v) for v in vle_data['x']]
+    ys = [cx(v) for v in vle_data['y']]
     h_L = [ch(v) for v in vle_data['h_L']]
     H_V = [ch(v) for v in vle_data['H_V']]
     axis_max = cx(1.0)
@@ -220,7 +222,7 @@ def plot_ponchon_savarit(vle_data, col_result, z_F, h_F, composition_unit="mole 
     ))
     
     fig.add_trace(go.Scatter(
-        x=xs, y=H_V,
+        x=ys, y=H_V,
         mode='lines',
         name='Sat. Vapor H_V',
         line=dict(color='#f87171', width=3)
@@ -265,7 +267,7 @@ def plot_ponchon_savarit(vle_data, col_result, z_F, h_F, composition_unit="mole 
     fig.add_trace(go.Scatter(
         x=[xD, z_F, xB], y=[Q_prime_D, h_F, Q_prime_B],
         mode='lines',
-        name='Operating Line',
+        name='Feed / difference-point line',
         line=dict(color='#facc15', width=2, dash='dash')
     ))
     
@@ -279,13 +281,20 @@ def plot_ponchon_savarit(vle_data, col_result, z_F, h_F, composition_unit="mole 
         ))
     
     lines = col_result.get('construction_lines', [])
+    shown_ray_types = set()
     for line in lines[:15]:
+        ray_type = line.get('type', 'operating')
+        color = '#c084fc' if ray_type == 'rectifying' else '#fb923c'
+        label = f"{ray_type.capitalize()} operating rays"
         fig.add_trace(go.Scatter(
-            x=[cx(line['x0']), cx(line['x1'])], y=[ch(line['y0']), ch(line['y1'])],
+            x=[cx(line['x0']), cx(line['x1']), cx(line.get('x2', line['x1']))],
+            y=[ch(line['y0']), ch(line['y1']), ch(line.get('y2', line['y1']))],
             mode='lines',
-            showlegend=False,
-            line=dict(color='rgba(148, 163, 184, 0.3)', width=1, dash='dot')
+            name=label,
+            showlegend=ray_type not in shown_ray_types,
+            line=dict(color=color, width=1.5, dash='dot')
         ))
+        shown_ray_types.add(ray_type)
 
     fig.update_layout(
         **DARK_LAYOUT_BASE,
