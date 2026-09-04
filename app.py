@@ -12,6 +12,7 @@ the tutorial.
 import hashlib
 import importlib
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -41,22 +42,37 @@ _MODULE_RELOAD_ORDER = (
 )
 
 
-@st.cache_resource
-def _refresh_source_modules() -> int:
-    """Reload ``src.*`` once per process, before this module binds names from them.
+def _source_fingerprint() -> str:
+    """Hash on-disk ``src.*`` and this file so a Cloud redeploy invalidates the reload cache.
 
-    ``st.cache_resource`` makes this process-global, so it runs once per boot
-    -- which is precisely when staleness can exist -- rather than on every
-    script rerun.  On a cold start the modules are not yet imported and the
-    loop is a no-op.
+    ``st.cache_resource`` is process-global.  Community Cloud can replace
+    ``app.py`` without restarting the process, so a no-argument cache would
+    skip the reload and keep the previous ``src.ui`` — which is exactly the
+    AttributeError on ``inject_square_xy_guard``.
+    """
+    root = Path(__file__).resolve().parent
+    hasher = hashlib.sha256()
+    hasher.update((root / "app.py").read_bytes())
+    for name in _MODULE_RELOAD_ORDER:
+        path = root / (name.replace(".", "/") + ".py")
+        if path.is_file():
+            hasher.update(path.read_bytes())
+    return hasher.hexdigest()
+
+
+@st.cache_resource
+def _refresh_source_modules(fingerprint: str) -> int:
+    """Reload ``src.*`` when the on-disk sources change, before binding names.
+
+    Import then reload in dependency order: a module that did
+    ``from src.ui import x`` keeps the old binding until it is itself reloaded.
     """
     reloaded = 0
     for name in _MODULE_RELOAD_ORDER:
-        module = sys.modules.get(name)
-        if module is None:
-            continue
         try:
-            importlib.reload(module)
+            if name not in sys.modules:
+                importlib.import_module(name)
+            importlib.reload(sys.modules[name])
             reloaded += 1
         except Exception:
             # A refresh failure must not take the app down; the normal import
@@ -65,7 +81,7 @@ def _refresh_source_modules() -> int:
     return reloaded
 
 
-_refresh_source_modules()
+_refresh_source_modules(_source_fingerprint())
 
 import src.column as col
 import src.plotting as plots
@@ -86,7 +102,9 @@ st.set_page_config(
 )
 st.markdown(theme.app_css(), unsafe_allow_html=True)
 ui.init_units()
-ui.inject_square_xy_guard()
+# Guard is new; a still-stale Cloud ``src.ui`` must not take the app down.
+if hasattr(ui, "inject_square_xy_guard"):
+    ui.inject_square_xy_guard()
 
 PLOTLY_CONFIG = {
     "scrollZoom": True,
