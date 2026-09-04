@@ -72,14 +72,28 @@ def pvap_water(T):
                   + PVAP_WATER['D'] * (T ** PVAP_WATER['E']))
 
 
+_T_BOIL_IPA: dict[float, float] = {}
+_T_BOIL_WATER: dict[float, float] = {}
+
+
 def t_boil_ipa(P=101325.0):
     """Pure-IPA boiling temperature at pressure ``P`` [K]."""
-    return brentq(lambda T: pvap_ipa(T) - P, 280.0, 500.0)
+    key = float(P)
+    cached = _T_BOIL_IPA.get(key)
+    if cached is None:
+        cached = float(brentq(lambda T: pvap_ipa(T) - key, 280.0, 500.0))
+        _T_BOIL_IPA[key] = cached
+    return cached
 
 
 def t_boil_water(P=101325.0):
     """Pure-water boiling temperature at pressure ``P`` [K]."""
-    return brentq(lambda T: pvap_water(T) - P, 280.0, 500.0)
+    key = float(P)
+    cached = _T_BOIL_WATER.get(key)
+    if cached is None:
+        cached = float(brentq(lambda T: pvap_water(T) - key, 280.0, 500.0))
+        _T_BOIL_WATER[key] = cached
+    return cached
 
 
 def hvap_ipa(T):
@@ -255,14 +269,23 @@ def bubble_residual(x1, T, P):
     return x1 * g1 * pvap_ipa(T) + (1.0 - x1) * g2 * pvap_water(T) - P
 
 
+_T_BRACKET: dict[float, tuple[float, float]] = {}
+
+
 def _temperature_bracket(P):
     """A bracket guaranteed to contain every binary bubble temperature at ``P``.
 
     The minimum-boiling azeotrope sits *below* both pure boiling points, hence
-    the generous lower margin.
+    the generous lower margin.  Cached per pressure: every scalar bubble-point
+    used to re-solve both pure boiling points just to rebuild this window.
     """
-    t_ipa, t_water = t_boil_ipa(P), t_boil_water(P)
-    return min(t_ipa, t_water) - 15.0, max(t_ipa, t_water) + 5.0
+    key = float(P)
+    cached = _T_BRACKET.get(key)
+    if cached is None:
+        t_ipa, t_water = t_boil_ipa(key), t_boil_water(key)
+        cached = (min(t_ipa, t_water) - 15.0, max(t_ipa, t_water) + 5.0)
+        _T_BRACKET[key] = cached
+    return cached
 
 
 #: 90 K / 2**60 is about 1e-16 K, i.e. exact to double precision.
@@ -338,10 +361,28 @@ def find_azeotrope(P=101325.0):
     return _AZEOTROPE_CACHE[key]
 
 
-#: Resolution of the cached y(x) table used to bracket dew-point inversions.
+#: Resolution of the cached saturation envelope used to invert y(x) and to
+#: interpolate enthalpies inside rating probes.
 _INVERSION_GRID = 512
 
-_INVERSION_CACHE: dict[float, tuple[np.ndarray, np.ndarray]] = {}
+_ENVELOPE_CACHE: dict[float, tuple] = {}
+
+
+def _envelope(P):
+    """Cached ``(x, y, T, h_L, H_V)`` saturation envelope at ``P``.
+
+    One vectorised bubble-point curve plus the two enthalpy expressions.
+    Rating probes interpolate this table; the public scalar bubble/dew
+    solvers still root-find so presentation results stay exact.
+    """
+    key = float(P)
+    cached = _ENVELOPE_CACHE.get(key)
+    if cached is None:
+        x = np.linspace(0.0, 1.0, _INVERSION_GRID)
+        T, y = bubble_point_curve(x, key)
+        cached = (x, y, T, h_liquid_mix(x, T), h_vapor_mix(y, T))
+        _ENVELOPE_CACHE[key] = cached
+    return cached
 
 
 def _inversion_table(P):
@@ -353,12 +394,35 @@ def _inversion_table(P):
     method needs, and the array solve that builds the table is cheaper than
     the scalar calls it saves.
     """
-    key = float(P)
-    if key not in _INVERSION_CACHE:
-        x = np.linspace(0.0, 1.0, _INVERSION_GRID)
-        _, y = bubble_point_curve(x, key)
-        _INVERSION_CACHE[key] = (x, y)
-    return _INVERSION_CACHE[key]
+    x, y, _T, _h_L, _H_V = _envelope(P)
+    return x, y
+
+
+def dew_envelope(y1, P=101325.0):
+    """Interpolated dew temperature, incipient liquid ``x`` and ``H_V`` at ``y1``.
+
+    ``y(x)`` is strictly increasing for this binary, so a single ``np.interp``
+    inverts the envelope.  Used by rating probes; :func:`dew_point` remains
+    the exact scalar root-find.
+    """
+    y1 = float(np.clip(y1, 0.0, 1.0))
+    x_tab, y_tab, T_tab, _h_L, H_tab = _envelope(P)
+    return (
+        float(np.interp(y1, y_tab, T_tab)),
+        float(np.interp(y1, y_tab, x_tab)),
+        float(np.interp(y1, y_tab, H_tab)),
+    )
+
+
+def bubble_envelope(x1, P=101325.0):
+    """Interpolated bubble temperature, vapour ``y`` and ``h_L`` at ``x1``."""
+    x1 = float(np.clip(x1, 0.0, 1.0))
+    x_tab, y_tab, T_tab, h_tab, _H_V = _envelope(P)
+    return (
+        float(np.interp(x1, x_tab, T_tab)),
+        float(np.interp(x1, x_tab, y_tab)),
+        float(np.interp(x1, x_tab, h_tab)),
+    )
 
 
 def _bracket_from_table(y1, P, low, high):

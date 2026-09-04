@@ -171,6 +171,27 @@ def test_rating_mode_varies_with_the_request():
     assert len(counts) == 3, f"rating ignored the specification: {counts}"
 
 
+def test_rating_probe_stage_count_matches_exact_design():
+    """Interpolated rating probes must land on the same integer N as the exact column.
+
+    The search interpolates the saturation envelope; the presented column is
+    still the scalar root-find.  If those two disagree on stage count, rating
+    would report the wrong hardware.
+    """
+    F, z_F, P = 100.0, 0.20, 101325.0
+    feed = th.calculate_feed_state(z_F, P, q=1.0)
+    D = F * (z_F - 0.02) / (0.60 - 0.02)
+    for x_D in (0.40, 0.50, 0.56, 0.60, 0.64):
+        x_B = (F * z_F - D * x_D) / (F - D)
+        exact = col.solve_design_column(F, z_F, P, x_D, x_B, 3.0, feed)
+        probe = col.solve_design_column(
+            F, z_F, P, x_D, x_B, 3.0, feed,
+            diagnostics=False, approx_vle=True,
+        )
+        assert probe["total_stages"] == exact["total_stages"], x_D
+        assert probe["feed_stage"] == exact["feed_stage"], x_D
+
+
 def test_rating_feasible_window_respects_the_component_balance():
     """The window must keep x_B positive and below z_F, and x_D below azeotrope."""
     F, z_F, P = 100.0, 0.20, 101325.0

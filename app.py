@@ -96,6 +96,38 @@ SPEC_QUANTITY = {
 }
 
 
+@st.cache_data(show_spinner=False)
+def _cached_vle_curves(pressure: float, n_points: int) -> dict:
+    return th.get_vle_curves(pressure, n_points=n_points)
+
+
+@st.cache_data(show_spinner="Solving Ponchon-Savarit stages and MESH energy balances…")
+def _cached_column_solve(
+    mode_is_rating: bool,
+    F: float,
+    z_F: float,
+    P: float,
+    feed_items: tuple,
+    x_D: float,
+    x_B: float,
+    R: float,
+    D: float,
+    N_spec: int,
+    N_feed: int,
+    subcooling_dT: float,
+    murphree_eff: float,
+) -> dict:
+    """Physics-only cache: display-unit changes must not re-solve the column."""
+    feed = dict(feed_items)
+    if mode_is_rating:
+        return col.solve_rating_column(
+            F, z_F, P, feed, N_spec, N_feed, R, D, subcooling_dT, murphree_eff,
+        )
+    return col.solve_design_column(
+        F, z_F, P, x_D, x_B, R, feed, subcooling_dT, murphree_eff,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Sidebar: feed, hardware, and the single display-unit panel
 # ---------------------------------------------------------------------------
@@ -192,6 +224,8 @@ with st.sidebar:
              "on a real tray.",
     )
 
+    N_spec = 0
+    N_feed_spec = 0
     if "Rating" in mode:
         st.subheader("Rating specification")
         st.session_state.setdefault("rating_stages", 10)
@@ -336,17 +370,15 @@ with st.expander("🔐 Specification locker — exactly two degrees of freedom",
 x_D, x_B = dof.values["x_D"], dof.values["x_B"]
 R, D = dof.values["R"], dof.values["D"]
 
-with st.spinner("Solving Ponchon-Savarit stages and MESH energy balances…"):
-    vle_data = th.get_vle_curves(P, n_points=240)
-    if "Design" in mode:
-        result = col.solve_design_column(
-            F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT, murphree_eff
-        )
-    else:
-        result = col.solve_rating_column(
-            F, z_F, P, feed_state, N_spec, N_feed_spec, R, D,
-            subcooling_dT, murphree_eff,
-        )
+vle_data = _cached_vle_curves(float(P), 240)
+feed_items = tuple(sorted((key, float(value)) for key, value in feed_state.items()))
+result = _cached_column_solve(
+    "Rating" in mode,
+    float(F), float(z_F), float(P), feed_items,
+    float(x_D), float(x_B), float(R), float(D),
+    int(N_spec), int(N_feed_spec),
+    float(subcooling_dT), float(murphree_eff),
+)
 
 
 # ---------------------------------------------------------------------------
