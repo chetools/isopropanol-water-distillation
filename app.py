@@ -194,8 +194,24 @@ with st.sidebar:
 
     if "Rating" in mode:
         st.subheader("Rating specification")
-        N_spec = st.number_input("Total stages N", 3, 50, 10)
-        N_feed_spec = st.number_input("Feed stage from top", 1, int(N_spec), 5)
+        st.session_state.setdefault("rating_stages", 10)
+        N_spec = int(st.number_input(
+            "Total stages N", min_value=3, max_value=50, step=1,
+            key="rating_stages",
+            help="Equilibrium stages including the partial reboiler.",
+        ))
+        # The feed stage cannot exceed the stage count, and Streamlit retains a
+        # widget's previous value across reruns.  Lowering N below the retained
+        # feed stage therefore raises StreamlitValueAboveMaxError unless the
+        # stored value is clamped *before* the widget is rendered.
+        st.session_state.rating_feed_stage = min(
+            int(st.session_state.get("rating_feed_stage", 5)), N_spec
+        )
+        N_feed_spec = int(st.number_input(
+            "Feed stage from top", min_value=1, max_value=N_spec, step=1,
+            key="rating_feed_stage",
+            help="Where the feed enters, counted from the top.",
+        ))
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +368,25 @@ ui.kpi_card(kpis[4], "Condenser duty Q_C",
 ui.kpi_card(kpis[5], "Reboiler duty Q_R",
             f"{from_canonical(result['Q_R'], 'duty', duty_unit):.4g}", duty_unit,
             "partial reboiler")
+
+# In rating mode the requested hardware is not always attainable at the given
+# reflux ratio and distillate rate.  Say so plainly rather than quietly
+# returning a different column than the one that was asked for.
+rating = result.get("rating")
+if rating and rating["message"]:
+    st.warning(
+        f"**Rating specification not met.** You asked for "
+        f"{rating['requested_stages']} stages; this column delivers "
+        f"{result['total_stages']}. {rating['message']}"
+    )
+elif rating and not rating["feed_stage_met"]:
+    st.info(
+        f"Stage count matched ({result['total_stages']}). The feed stage is "
+        f"placed at {result['feed_stage']} rather than the requested "
+        f"{rating['requested_feed_stage']}: the solver puts the feed where the "
+        f"construction crosses the feed line, which is the optimal location for "
+        f"this split (tutorial §5D)."
+    )
 
 
 # ---------------------------------------------------------------------------

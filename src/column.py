@@ -282,28 +282,158 @@ def solve_design_column(F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT=0.0, m
         'mccabe_lines': mccabe_lines
     }
 
-def solve_rating_column(F, z_F, P, feed_state, N_stages, N_feed, R, D_spec, subcooling_dT=0.0, murphree_eff=1.0):
-    D = float(D_spec)
+#: Smallest bottoms composition treated as physically meaningful.
+_XB_FLOOR = 1e-3
+
+#: Bisection budget for inverting the monotone N(x_D) in a rating case.
+#: N is an integer step function, so the search only has to land inside the
+#: right step: it stops as soon as the bracket is narrower than the tolerance.
+_RATING_BISECTIONS = 16
+_RATING_TOLERANCE = 2e-4
+
+
+def rating_feasible_window(F, z_F, P, D):
+    r"""The range of distillate compositions a rating case may actually use.
+
+    Three constraints bound it, and the previous implementation respected none
+    of them properly -- it stopped at ``min(0.66, 2.5 z_F + 0.1)``, a heuristic
+    that silently excluded the high-purity end where the larger stage counts
+    live.
+
+    1. The component balance fixes :math:`x_B=(F z_F-D x_D)/B`, so :math:`x_D`
+       may not rise so far that :math:`x_B` goes negative.
+    2. :math:`x_B` must stay below :math:`z_F` for the split to make sense.
+    3. :math:`x_D` cannot reach the azeotrope at this pressure.
+
+    Returns ``(low, high)``; ``high <= low`` means no feasible split exists for
+    this distillate rate.
+    """
     B = F - D
-    h_F = feed_state['h_F']
-    x_D_guess = min(0.65, z_F * 2.5)
-    best_res = None
-    best_err = 1e9
-    xD_candidates = np.linspace(z_F + 0.05, min(0.66, x_D_guess + 0.1), 30)
-    for xD_test in xD_candidates:
-        xB_test = (F * z_F - D * xD_test) / B
-        if xB_test <= 0.001 or xB_test >= z_F:
-            continue
+    if B <= 0.0 or D <= 0.0:
+        return 1.0, 0.0
+    x_azeo, _ = th.find_azeotrope(P)
+    low = max(z_F + 0.01, (F * z_F - (z_F - 0.005) * B) / D)
+    high = min(x_azeo - 0.005, (F * z_F - _XB_FLOOR * B) / D)
+    return float(low), float(high)
+
+
+def solve_rating_column(F, z_F, P, feed_state, N_stages, N_feed, R, D_spec,
+                        subcooling_dT=0.0, murphree_eff=1.0):
+    """Fixed-hardware case: find the split a column of ``N_stages`` delivers.
+
+    With the feed and the distillate rate fixed, the component balance leaves a
+    one-parameter family of splits indexed by :math:`x_D`, and the stage count
+    rises monotonically along it.  Rating therefore means inverting
+    :math:`N(x_D)` -- sampling the *whole* feasible window from
+    :func:`rating_feasible_window`, then refining around the best sample.
+
+    The requested stage count is not always attainable: at a given reflux ratio
+    and distillate rate there is a maximum separation, and asking for more
+    stages than that has no solution.  Rather than silently returning something
+    else, the result carries ``rating`` diagnostics recording what was asked
+    for, what the hardware can actually deliver, and whether the two agree.
+    """
+    D = float(D_spec)
+    low, high = rating_feasible_window(F, z_F, P, D)
+
+    def attempt(x_D):
+        x_B = (F * z_F - D * x_D) / (F - D)
+        if not (_XB_FLOOR <= x_B < z_F):
+            return None
         try:
-            res = solve_design_column(F, z_F, P, xD_test, xB_test, R, feed_state, subcooling_dT, murphree_eff)
-            err = abs(res['total_stages'] - N_stages) + 0.2 * abs(res['feed_stage'] - N_feed)
-            if err < best_err:
-                best_err = err
-                best_res = res
+            return solve_design_column(F, z_F, P, x_D, x_B, R, feed_state,
+                                       subcooling_dT, murphree_eff)
         except Exception:
-            continue
-    if best_res is None:
-        xD_nominal = min(0.62, z_F * 2.0)
-        xB_nominal = max(0.01, (F * z_F - D * xD_nominal) / B)
-        best_res = solve_design_column(F, z_F, P, xD_nominal, xB_nominal, R, feed_state, subcooling_dT, murphree_eff)
-    return best_res
+            return None
+
+    # N(x_D) is monotonically non-decreasing across the feasible window -- a
+    # purer distillate always needs at least as many stages -- so the request
+    # is inverted by bisection rather than by scanning.  That is ~14 column
+    # solves instead of 60, which is what keeps Rating mode interactive.
+    solutions = []
+    if high > low:
+        endpoints = [(x, attempt(x)) for x in (low, high)]
+        solutions = [s for _, s in endpoints if s is not None]
+
+    if solutions and len(solutions) == 2:
+        (x_low, low_solution), (x_high, high_solution) = endpoints
+        reachable_low = low_solution["total_stages"]
+        reachable_high = high_solution["total_stages"]
+
+        if N_stages <= reachable_low:
+            best_bisect = low_solution
+        elif N_stages >= reachable_high:
+            best_bisect = high_solution
+        else:
+            # Smallest x_D whose stage count reaches the request.
+            lo_x, hi_x, best_bisect = x_low, x_high, high_solution
+            for _ in range(_RATING_BISECTIONS):
+                if hi_x - lo_x < _RATING_TOLERANCE:
+                    break
+                mid_x = 0.5 * (lo_x + hi_x)
+                probe = attempt(mid_x)
+                if probe is None:
+                    hi_x = mid_x
+                    continue
+                if probe["total_stages"] >= N_stages:
+                    hi_x, best_bisect = mid_x, probe
+                else:
+                    lo_x = mid_x
+        solutions = [low_solution, high_solution, best_bisect]
+
+    if not solutions:
+        # No feasible split at this distillate rate; fall back to a nominal one
+        # so the interface still has something coherent to display.
+        fallback = attempt(min(0.62, z_F * 2.0)) or solve_design_column(
+            F, z_F, P, min(0.62, z_F * 2.0),
+            max(0.01, (F * z_F - D * min(0.62, z_F * 2.0)) / (F - D)),
+            R, feed_state, subcooling_dT, murphree_eff,
+        )
+        fallback["rating"] = {
+            "requested_stages": int(N_stages), "requested_feed_stage": int(N_feed),
+            "achievable_stages": None, "stages_met": False, "feed_stage_met": False,
+            "message": ("No feasible split exists at this distillate rate: the "
+                        "component balance drives the bottoms composition out of "
+                        "range. Change D, or the product purities."),
+        }
+        return fallback
+
+    counts = [s["total_stages"] for s in solutions]
+    reachable = (min(counts), max(counts))   # endpoints bound the monotone range
+
+    # Closest stage count, with the feed stage as a tie-break.
+    best = min(solutions, key=lambda s: (abs(s["total_stages"] - N_stages),
+                                         abs(s["feed_stage"] - N_feed)))
+
+    stages_met = best["total_stages"] == int(N_stages)
+    message = ""
+    if not stages_met:
+        if N_stages > reachable[1]:
+            message = (
+                f"{int(N_stages)} stages cannot be reached at R = {R:.3g} with "
+                f"D fixed: the most this column can use is {reachable[1]} before "
+                f"the bottoms composition runs out. Lower the reflux ratio "
+                f"(towards R_min) or reduce D to need more stages."
+            )
+        elif N_stages < reachable[0]:
+            message = (
+                f"{int(N_stages)} stages is fewer than the {reachable[0]} this "
+                f"separation needs at R = {R:.3g}. Raise the reflux ratio to do "
+                f"the job in fewer stages."
+            )
+        else:
+            message = (
+                f"No split in the feasible window lands on exactly "
+                f"{int(N_stages)} stages; the closest is "
+                f"{best['total_stages']}."
+            )
+
+    best["rating"] = {
+        "requested_stages": int(N_stages),
+        "requested_feed_stage": int(N_feed),
+        "achievable_stages": reachable,
+        "stages_met": stages_met,
+        "feed_stage_met": best["feed_stage"] == int(N_feed),
+        "message": message,
+    }
+    return best

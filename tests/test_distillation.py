@@ -128,3 +128,87 @@ def test_streamlit_app_executes():
     from streamlit.testing.v1 import AppTest
     at = AppTest.from_file('../app.py').run(timeout=30)
     assert len(at.exception) == 0, f"App raised exceptions: {[e.message for e in at.exception]}"
+
+
+# ---------------------------------------------------------------------------
+# Rating mode must honour the requested hardware
+# ---------------------------------------------------------------------------
+
+def _rating_case(N, N_feed, R=3.0):
+    F, z_F, P = 100.0, 0.20, 101325.0
+    feed = th.calculate_feed_state(z_F, P, q=1.0)
+    D = F * (z_F - 0.02) / (0.60 - 0.02)
+    return col.solve_rating_column(F, z_F, P, feed, N, N_feed, R, D)
+
+
+@pytest.mark.parametrize("requested", [2, 3, 4, 5, 6])
+def test_rating_mode_delivers_the_requested_stage_count(requested):
+    """Asking for N stages must actually produce N stages when attainable.
+
+    The previous search capped the distillate window at a heuristic
+    min(0.66, 2.5*z_F + 0.1), which excluded the high-purity end where the
+    larger stage counts live, so every request returned the same 4-stage
+    column.
+    """
+    result = _rating_case(requested, max(1, requested // 2))
+    assert result["total_stages"] == requested, result["rating"]["message"]
+    assert result["rating"]["stages_met"]
+
+
+def test_rating_mode_reports_an_unattainable_specification():
+    """More stages than the reflux ratio can use must be flagged, not faked."""
+    result = _rating_case(10, 5)
+    rating = result["rating"]
+    assert not rating["stages_met"]
+    assert rating["requested_stages"] == 10
+    assert result["total_stages"] == rating["achievable_stages"][1]
+    assert "cannot be reached" in rating["message"]
+
+
+def test_rating_mode_varies_with_the_request():
+    """Different specifications must give different columns."""
+    counts = {_rating_case(n, 2)["total_stages"] for n in (2, 4, 6)}
+    assert len(counts) == 3, f"rating ignored the specification: {counts}"
+
+
+def test_rating_feasible_window_respects_the_component_balance():
+    """The window must keep x_B positive and below z_F, and x_D below azeotrope."""
+    F, z_F, P = 100.0, 0.20, 101325.0
+    D = F * (z_F - 0.02) / (0.60 - 0.02)
+    low, high = col.rating_feasible_window(F, z_F, P, D)
+    x_azeo, _ = th.find_azeotrope(P)
+    assert low < high
+    assert high < x_azeo
+    for x_D in (low, high):
+        x_B = (F * z_F - D * x_D) / (F - D)
+        assert 0.0 < x_B < z_F, f"x_D={x_D} gives x_B={x_B}"
+
+
+def test_lowering_stage_count_below_the_feed_stage_does_not_crash():
+    """Regression: reducing N below a retained feed stage must not raise.
+
+    Streamlit keeps a widget's previous value across reruns, so lowering the
+    stage count shrinks the feed-stage max_value while the stored value stays
+    high, producing StreamlitValueAboveMaxError.  This only appears in a
+    *sequence* of interactions, which a single-render smoke test cannot catch.
+    """
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file('../app.py')
+    at.run(timeout=120)
+    assert not at.exception, [e.message for e in at.exception]
+
+    # Switch to Rating mode.
+    at.radio[0].set_value("Rating (fixed stages)").run(timeout=120)
+    assert not at.exception, [e.message for e in at.exception]
+
+    at.session_state["rating_stages"] = 10
+    at.session_state["rating_feed_stage"] = 5
+    at.run(timeout=120)
+    assert not at.exception, [e.message for e in at.exception]
+
+    # Now drop the stage count below the retained feed stage.
+    at.session_state["rating_stages"] = 4
+    at.run(timeout=120)
+    assert not at.exception, [e.message for e in at.exception]
+    assert at.session_state["rating_feed_stage"] <= 4
