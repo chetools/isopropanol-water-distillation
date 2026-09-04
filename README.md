@@ -2,6 +2,8 @@
 
 A standalone, production-grade Streamlit web application for the rigorous design and simulation of an Isopropanol / Water distillation column.
 
+**Public app:** [IPA/Water Rigorous Distillation Simulator](https://chetools-isopropanol-water-distillation-app-ofszvm.streamlit.app/)
+
 [![Deploy with Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/deploy?repository=chetools/isopropanol-water-distillation&branch=main&mainModule=app.py)
 
 ## ⚡️ Key Features
@@ -30,6 +32,14 @@ A standalone, production-grade Streamlit web application for the rigorous design
 6. **Dual Modes**:
    - **Design Mode**: Ponchon-Savarit stage stepping, $R_{\text{min}}$, $N_{\text{min}}$, and optimal feed stage $N_F$.
    - **Rating Mode**: Fixed tray count MESH simulation.
+
+7. **Automated Preliminary Sizing & Economics**:
+   - Calculates tray-column diameter, tangent height, preliminary shell thickness, condenser/reboiler area, installed capital, utility costs, and total annualized cost from the simulated column loads.
+   - Exposes hydraulic, mechanical, heat-transfer, utility, material, and cost-index assumptions with a downloadable calculation audit trail.
+
+8. **Step-by-Step Engineering Tutorial**:
+   - Collapsible derivations with material- and energy-balance envelopes for NRTL VLE, flash calculations, McCabe-Thiele, Ponchon-Savarit, equipment sizing, economics, and safe operation.
+   - States modelling assumptions, applicability limits, validation checks, and linked references; it is an educational screening guide, not a substitute for code design or a process-safety review.
 
 ## 🔬 Thermodynamic Data Source
 All parameters come strictly from `chetools/chetools/data`:
