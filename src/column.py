@@ -104,8 +104,10 @@ def solve_design_column(F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT=0.0, m
                 return th.h_vapor_mix(y, Td) - ray_H(y)
             try:
                 y_next = brentq(diff_y, x_n, x_D - 1e-5)
+                ray_converged = True
             except Exception:
                 y_next = max(x_B + 1e-4, x_n - 0.05)
+                ray_converged = False
             
             Td_next, _ = th.dew_point(y_next, P)
             HV_next = th.h_vapor_mix(y_next, Td_next)
@@ -117,11 +119,13 @@ def solve_design_column(F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT=0.0, m
                 L_stage = L_reflux
             V_stage = L_stage + D
             
-            construction_lines.append({
-                'type': 'rectifying',
-                'x0': x_D, 'y0': Q_prime_D,
-                'x1': x_n, 'y1': h_Ln
-            })
+            if ray_converged and x_n > x_B:
+                construction_lines.append({
+                    'type': 'rectifying',
+                    'x0': x_D, 'y0': Q_prime_D,
+                    'x1': x_n, 'y1': h_Ln,
+                    'x2': float(y_next), 'y2': float(HV_next),
+                })
         else:
             def ray_H(y):
                 return h_Ln + ((Q_prime_B - h_Ln) / (x_B - x_n)) * (y - x_n)
@@ -130,8 +134,10 @@ def solve_design_column(F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT=0.0, m
                 return th.h_vapor_mix(y, Td) - ray_H(y)
             try:
                 y_next = brentq(diff_y, x_B + 1e-5, min(0.66, x_n + 0.15))
+                ray_converged = True
             except Exception:
                 y_next = max(x_B + 1e-4, x_n * 0.8)
+                ray_converged = False
             
             Td_next, _ = th.dew_point(y_next, P)
             HV_next = th.h_vapor_mix(y_next, Td_next)
@@ -144,11 +150,13 @@ def solve_design_column(F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT=0.0, m
             L_stage = V_next + B
             V_stage = V_next
             
-            construction_lines.append({
-                'type': 'stripping',
-                'x0': x_B, 'y0': Q_prime_B,
-                'x1': x_n, 'y1': h_Ln
-            })
+            if ray_converged and x_n > x_B:
+                construction_lines.append({
+                    'type': 'stripping',
+                    'x0': x_B, 'y0': Q_prime_B,
+                    'x1': x_n, 'y1': h_Ln,
+                    'x2': float(y_next), 'y2': float(HV_next),
+                })
         
         stage_info = {
             'stage': n,
@@ -191,20 +199,33 @@ def solve_design_column(F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT=0.0, m
     x_I = float(np.clip(x_I, x_B, x_D))
     y_I = float(np.clip(y_I, x_B, x_D))
     
-    # Staircase steps (alternating horizontal and vertical)
+    # Independent CMO McCabe–Thiele construction.  Do not reuse the
+    # Ponchon–Savarit stage coordinates: those include variable internal flows
+    # and therefore need not lie exactly on the CMO operating lines.
     staircase_x = [x_D]
     staircase_y = [x_D]
-    for i, s in enumerate(stages):
-        staircase_x.append(s['x'])
-        staircase_y.append(s['y'])
-        if i < len(stages) - 1:
-            staircase_x.append(s['x'])
-            staircase_y.append(stages[i + 1]['y'])
+    m_S = (y_I - x_B) / max(x_I - x_B, 1e-12)
+    b_S = x_B * (1.0 - m_S)
+    y_step = x_D
+    mccabe_stage_count = 0
+    for _ in range(100):
+        _, x_eq = th.dew_point(y_step, P)
+        x_eq = float(np.clip(x_eq, 0.0, 1.0))
+        staircase_x.append(x_eq)
+        staircase_y.append(y_step)  # horizontal: equilibrium tie at fixed y
+        mccabe_stage_count += 1
+        if x_eq <= x_B:
+            break
+        if x_eq >= x_I:
+            y_next = m_R * x_eq + b_R
         else:
-            staircase_x.append(s['x'])
-            staircase_y.append(x_B)
-            staircase_x.append(x_B)
-            staircase_y.append(x_B)
+            y_next = m_S * x_eq + b_S
+        y_next = float(np.clip(y_next, 0.0, 1.0))
+        staircase_x.append(x_eq)
+        staircase_y.append(y_next)  # vertical: component-balance operating line
+        if y_next <= x_B:
+            break
+        y_step = y_next
 
     mccabe_lines = {
         'rectifying_x': [x_D, x_I],
@@ -214,7 +235,8 @@ def solve_design_column(F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT=0.0, m
         'q_line_x': [z_F, x_I],
         'q_line_y': [z_F, y_I],
         'staircase_x': staircase_x,
-        'staircase_y': staircase_y
+        'staircase_y': staircase_y,
+        'stage_count': mccabe_stage_count,
     }
 
     return {

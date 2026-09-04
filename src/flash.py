@@ -2,7 +2,7 @@
 
 All functions use mole fractions, kelvin, pascal, mol/s, and kJ/mol.  The
 algorithms favor bracketed scalar roots and explicit residual checks so they
-can be reproduced directly in hand-written Python.
+can be reproduced directly in Python.
 """
 
 import numpy as np

@@ -50,6 +50,42 @@ def test_ponchon_savarit_collinearity():
     slope_FB = (res['h_F'] - res['Q_prime_B']) / (z_F - x_B)
     assert abs(slope_DF - slope_FB) < 1e-6, "Δ_D, F, Δ_B are not collinear!"
 
+
+def test_ponchon_operating_rays_reach_equilibrium_vapor_curve():
+    """Every displayed ray passes through liquid and next-vapor endpoints."""
+    P = 101325.0
+    feed = th.calculate_feed_state(0.20, P, q=1.0)
+    res = col.solve_design_column(100.0, 0.20, P, 0.60, 0.02, 3.0, feed)
+    assert res['construction_lines']
+    for ray in res['construction_lines']:
+        slope_01 = (ray['y1'] - ray['y0']) / (ray['x1'] - ray['x0'])
+        slope_02 = (ray['y2'] - ray['y0']) / (ray['x2'] - ray['x0'])
+        assert slope_01 == pytest.approx(slope_02, rel=1e-7, abs=1e-7)
+        T_dew, _ = th.dew_point(ray['x2'], P)
+        assert ray['y2'] == pytest.approx(th.h_vapor_mix(ray['x2'], T_dew), abs=1e-8)
+
+
+def test_mccabe_staircase_alternates_equilibrium_and_operating_steps():
+    """Horizontal endpoints are equilibrated; vertical endpoints lie on an operating line."""
+    P = 101325.0
+    x_D, x_B, z_F, R = 0.60, 0.02, 0.20, 3.0
+    feed = th.calculate_feed_state(z_F, P, q=1.0)
+    res = col.solve_design_column(100.0, z_F, P, x_D, x_B, R, feed)
+    m = res['mccabe_lines']
+    xs, ys = m['staircase_x'], m['staircase_y']
+    x_i, y_i = m['rectifying_x'][-1], m['rectifying_y'][-1]
+    m_r, b_r = R / (R + 1.0), x_D / (R + 1.0)
+    m_s = (y_i - x_B) / (x_i - x_B)
+    b_s = x_B * (1.0 - m_s)
+    for i in range(1, len(xs), 2):
+        assert ys[i] == pytest.approx(ys[i - 1])
+        _, x_eq = th.dew_point(ys[i], P)
+        assert xs[i] == pytest.approx(x_eq, abs=1e-8)
+        if i + 1 < len(xs):
+            assert xs[i + 1] == pytest.approx(xs[i])
+            expected = m_r * xs[i] + b_r if xs[i] >= x_i else m_s * xs[i] + b_s
+            assert ys[i + 1] == pytest.approx(expected, abs=1e-8)
+
 def test_non_equimolar_overflow_variation():
     F = 100.0; z_F = 0.20; P = 101325.0; x_D = 0.60; x_B = 0.02; R = 3.0
     feed = th.calculate_feed_state(z_F, P, q=1.0)

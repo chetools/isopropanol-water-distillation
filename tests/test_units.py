@@ -9,7 +9,7 @@ from src.units import from_canonical, to_canonical, unit_options
     "energy", "energy_price", "money", "money_rate", "hours_year", "fraction", "composition",
 ])
 def test_every_engineering_unit_round_trips(quantity):
+    canonical = 0.345 if quantity in {"composition", "fraction"} else 12.345
     for unit in unit_options(quantity):
-        displayed = from_canonical(12.345, quantity, unit)
-        assert to_canonical(displayed, quantity, unit) == pytest.approx(12.345)
-
+        displayed = from_canonical(canonical, quantity, unit)
+        assert to_canonical(displayed, quantity, unit) == pytest.approx(canonical)
