@@ -13,6 +13,7 @@ import src.column as col
 import src.plotting as plt
 import src.dof_manager as dof_mod
 from src.tutorial import render_tutorial
+from src.sizing_dashboard import render_sizing_dashboard
 
 importlib.reload(th)
 importlib.reload(col)
@@ -302,6 +303,10 @@ with kpi6:
 
 st.markdown("---")
 
+render_sizing_dashboard(col_result)
+
+st.markdown("---")
+
 # Unified Single-Panel Grid (2x2 Layout)
 st.subheader("📊 Distillation Visualization Dashboard")
 
@@ -315,23 +320,23 @@ grid_row1_col1, grid_row1_col2 = st.columns(2)
 with grid_row1_col1:
     st.markdown("<div style='text-align:center; font-size:18px; font-weight:700; color:#f8fafc; margin-bottom:4px;'>McCabe-Thiele Diagram (x-y)</div>", unsafe_allow_html=True)
     fig_xy = plt.plot_xy(vle_data, col_result, z_F)
-    st.plotly_chart(fig_xy, use_container_width=False, config=PLOTLY_CONFIG)
+    st.plotly_chart(fig_xy, width="content", config=PLOTLY_CONFIG)
 
 with grid_row1_col2:
     st.markdown(f"<div style='text-align:center; font-size:18px; font-weight:700; color:#f8fafc; margin-bottom:4px;'>Constant P VLE (T-x-y) at {P/1e3:.1f} kPa</div>", unsafe_allow_html=True)
     fig_txy = plt.plot_txy(vle_data, col_result, z_F, P)
-    st.plotly_chart(fig_txy, use_container_width=False, config=PLOTLY_CONFIG)
+    st.plotly_chart(fig_txy, width="content", config=PLOTLY_CONFIG)
 
 grid_row2_col1, grid_row2_col2 = st.columns(2)
 with grid_row2_col1:
     st.markdown("<div style='text-align:center; font-size:18px; font-weight:700; color:#f8fafc; margin-bottom:4px;'>Ponchon-Savarit Diagram (H-x-y)</div>", unsafe_allow_html=True)
     fig_ps = plt.plot_ponchon_savarit(vle_data, col_result, z_F, feed_state['h_F'])
-    st.plotly_chart(fig_ps, use_container_width=False, config=PLOTLY_CONFIG)
+    st.plotly_chart(fig_ps, width="content", config=PLOTLY_CONFIG)
 
 with grid_row2_col2:
     st.markdown("<div style='text-align:center; font-size:18px; font-weight:700; color:#f8fafc; margin-bottom:4px;'>Internal Vapor & Liquid Flows (Non-CMO)</div>", unsafe_allow_html=True)
     fig_flow = plt.plot_flow_profiles(col_result)
-    st.plotly_chart(fig_flow, use_container_width=False, config=PLOTLY_CONFIG)
+    st.plotly_chart(fig_flow, width="content", config=PLOTLY_CONFIG)
 
 st.markdown("---")
 
@@ -356,7 +361,7 @@ with st.expander("📋 Stage-by-Stage Data Table & CSV Download", expanded=False
         'H_V (kJ/mol)': '{:.2f}',
         'L_n (mol/s)': '{:.2f}',
         'V_n (mol/s)': '{:.2f}'
-    }), use_container_width=True)
+    }), width="stretch")
     
     csv = df_stages.to_csv(index=False).encode('utf-8')
     st.download_button("⬇️ Download Stage Profiles (CSV)", csv, "distillation_stages.csv", "text/csv")
