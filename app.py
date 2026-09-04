@@ -12,6 +12,7 @@ import src.thermo as th
 import src.column as col
 import src.plotting as plt
 import src.dof_manager as dof_mod
+from src.tutorial import render_tutorial
 
 importlib.reload(th)
 importlib.reload(col)
@@ -383,3 +384,6 @@ with st.expander("📚 Thermodynamic Model & CHECHEM Equations", expanded=False)
     - **Excess Enthalpy**: Derived analytically via the Gibbs-Helmholtz equation:
       $$ H^E(x, T) = -R T^2 \sum x_i \frac{\partial \ln \gamma_i}{\partial T} $$
     """)
+
+st.markdown("---")
+render_tutorial()
