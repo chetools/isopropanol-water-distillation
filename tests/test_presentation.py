@@ -97,3 +97,74 @@ def test_layout_converts_inline_html_so_latex_survives():
     converted = _as_markdown("<b>Result</b> uses <i>x</i> and <code>Q_C</code>")
     assert converted == "**Result** uses *x* and `Q_C`"
     assert "<" not in converted
+
+
+# ---------------------------------------------------------------------------
+# Streamlit Cloud stale-module guard
+# ---------------------------------------------------------------------------
+
+def test_reload_guard_covers_every_src_module():
+    """Every importable src module must appear in app.py's reload order.
+
+    Streamlit Community Cloud can serve a stale already-imported module after a
+    redeploy.  A module missing from the guard is refreshed only by luck, which
+    is how the array-aware units.from_canonical once ran against a copy that
+    still did float(value).
+    """
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+
+    on_disk = set()
+    for path in (root / "src").rglob("*.py"):
+        if path.name == "__init__.py":
+            parent = path.parent
+            if parent.name != "src":
+                on_disk.add(f"src.{parent.name}")
+            continue
+        relative = path.relative_to(root).with_suffix("")
+        on_disk.add(".".join(relative.parts))
+
+    tree = ast.parse((root / "app.py").read_text(encoding="utf-8"))
+    listed = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            getattr(t, "id", "") == "_MODULE_RELOAD_ORDER" for t in node.targets
+        ):
+            listed = {
+                element.value for element in node.value.elts
+                if isinstance(element, ast.Constant)
+            }
+
+    assert listed, "app.py no longer defines _MODULE_RELOAD_ORDER"
+    missing = sorted(on_disk - listed)
+    assert not missing, f"src modules absent from the reload guard: {missing}"
+
+
+def test_reload_guard_lists_dependencies_before_dependents():
+    """units and theme must be refreshed before anything that imports them."""
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8"))
+    order = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            getattr(t, "id", "") == "_MODULE_RELOAD_ORDER" for t in node.targets
+        ):
+            order = [e.value for e in node.value.elts if isinstance(e, ast.Constant)]
+
+    for dependency, dependent in (
+        ("src.units", "src.plotting"),
+        ("src.units", "src.ui"),
+        ("src.units", "src.process_audit"),
+        ("src.units", "src.sizing_dashboard"),
+        ("src.theme", "src.engineering_diagrams"),
+        ("src.theme", "src.plotting"),
+        ("src.thermo", "src.column"),
+        ("src.tutorial.layout", "src.tutorial"),
+    ):
+        assert order.index(dependency) < order.index(dependent), (
+            f"{dependency} must be reloaded before {dependent}"
+        )

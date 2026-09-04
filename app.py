@@ -9,9 +9,62 @@ visible while the reader moves between design, diagrams, sizing, audit and
 the tutorial.
 """
 
+import importlib
+import sys
+
 import numpy as np
 import pandas as pd
 import streamlit as st
+
+# --- Streamlit Community Cloud stale-module guard ---------------------------
+# After a redeploy the Cloud runner can keep already-imported ``src.*`` modules
+# from the previous revision while serving the new ``app.py``.  The mismatch is
+# silent until a caller uses something the old module cannot do -- e.g. the new
+# array-aware ``units.from_canonical`` being served by a copy that still does
+# ``float(value)``, which raises TypeError on an array.
+#
+# Reloading in dependency order matters: a module that did
+# ``from src.units import from_canonical`` keeps its old binding until it is
+# itself reloaded, so every dependency must be refreshed before its dependents.
+_MODULE_RELOAD_ORDER = (
+    "src.units", "src.theme", "src.source_links",
+    "src.thermo", "src.flash", "src.column", "src.sizing",
+    "src.plotting", "src.ui", "src.dof_manager",
+    "src.engineering_diagrams", "src.process_audit", "src.sizing_dashboard",
+    "src.tutorial.layout",
+    "src.tutorial.ch00_nomenclature", "src.tutorial.ch01_overview",
+    "src.tutorial.ch02_equilibrium", "src.tutorial.ch03_flash",
+    "src.tutorial.ch04_mccabe", "src.tutorial.ch05_ponchon",
+    "src.tutorial.ch06_equipment", "src.tutorial.ch07_safety",
+    "src.tutorial.ch08_validation", "src.tutorial",
+)
+
+
+@st.cache_resource
+def _refresh_source_modules() -> int:
+    """Reload ``src.*`` once per process, before this module binds names from them.
+
+    ``st.cache_resource`` makes this process-global, so it runs once per boot
+    -- which is precisely when staleness can exist -- rather than on every
+    script rerun.  On a cold start the modules are not yet imported and the
+    loop is a no-op.
+    """
+    reloaded = 0
+    for name in _MODULE_RELOAD_ORDER:
+        module = sys.modules.get(name)
+        if module is None:
+            continue
+        try:
+            importlib.reload(module)
+            reloaded += 1
+        except Exception:
+            # A refresh failure must not take the app down; the normal import
+            # below still yields a working (if possibly stale) module.
+            pass
+    return reloaded
+
+
+_refresh_source_modules()
 
 import src.column as col
 import src.plotting as plots
