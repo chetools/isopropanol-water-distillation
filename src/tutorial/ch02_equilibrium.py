@@ -85,8 +85,11 @@ def render(state) -> None:
         "Setting " + ch.ref("fV") + " equal to " + ch.ref("fL") + " with "
         "$\\phi_i \\approx 1$ and Poynting $\\approx 1$:",
     )
+    # Note the trailing space: adjacent string literals are folded by the
+    # parser, so "...\qquad" + "y_i = ..." would yield the bogus command
+    # \qquady, which KaTeX renders as red error text.
     ch.eq(r"y_i P = x_i\,\gamma_i\,P_i^{sat}(T)"
-          r"\qquad\Longrightarrow\qquad"
+          r"\qquad\Longrightarrow\qquad "
           r"y_i = \frac{x_i\,\gamma_i\,P_i^{sat}(T)}{P}", "raoult")
 
     ch.step(

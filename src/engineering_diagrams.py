@@ -10,6 +10,7 @@ attaches a caption -- a figure a reader can refer to by number is worth far
 more than a floating picture.
 """
 
+import re
 from html import escape
 
 import src.theme as theme
@@ -18,7 +19,6 @@ import src.theme as theme
 _BG_TOP = theme.SURFACE
 _BG_BOTTOM = "#1a2536"
 _UNIT_TOP = "#2a3b53"
-_UNIT_BOTTOM = "#22314605"
 _FRAME = theme.BORDER_STRONG
 _TITLE = theme.TEXT
 _SUBTITLE = theme.TEXT_DIM
@@ -37,7 +37,7 @@ def _start(title: str, subtitle: str, height: int) -> list[str]:
 <div style="margin:0.9rem 0 0.4rem 0; width:100%; overflow-x:auto">
 <svg viewBox="0 0 1000 {height}" width="100%" role="img"
      aria-label="{escape(title)}" xmlns="http://www.w3.org/2000/svg"
-     style="min-width:0;max-width:1180px;display:block;margin:auto;font-family:{theme.FONT_STACK}">
+     style="min-width:0;max-width:1180px;display:block;margin:auto;aspect-ratio:1000/{height};font-family:{theme.FONT_STACK}">
   <title>{escape(title)}</title><desc>{escape(subtitle)}</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
@@ -49,28 +49,82 @@ def _start(title: str, subtitle: str, height: int) -> list[str]:
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
       <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000000" flood-opacity="0.45"/>
     </filter>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="{_STREAM}"/>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+      <path d="M 0 2.1 L 10 5 L 0 7.9 z" fill="{_STREAM}"/>
     </marker>
-    <marker id="heat-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="{_HEAT}"/>
+    <marker id="heat-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+      <path d="M 0 2.1 L 10 5 L 0 7.9 z" fill="{_HEAT}"/>
     </marker>
-    <marker id="green-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="{_GREEN}"/>
+    <marker id="green-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+      <path d="M 0 2.1 L 10 5 L 0 7.9 z" fill="{_GREEN}"/>
     </marker>
-    <marker id="thin-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="{_MUTED}"/>
+    <marker id="thin-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M 0 2.2 L 10 5 L 0 7.8 z" fill="{_MUTED}"/>
     </marker>
   </defs>
   <rect x="4" y="4" width="992" height="{height - 8}" rx="8" fill="url(#bg)" stroke="{_FRAME}"/>
-  <text x="36" y="42" fill="{_TITLE}" font-size="22" font-weight="700">{escape(title)}</text>
-  <text x="36" y="67" fill="{_SUBTITLE}" font-size="13.5">{escape(subtitle)}</text>
+  <text x="36" y="42" fill="{_TITLE}" font-size="18.5" font-weight="600">{escape(title)}</text>
+  <text x="36" y="67" fill="{_SUBTITLE}" font-size="12.5">{escape(subtitle)}</text>
 """]
 
 
 def _finish(parts: list[str]) -> str:
+    """Close the canvas and flatten the markup to a single line.
+
+    This is not cosmetic.  Streamlit renders the drawing through its markdown
+    pipeline, where a **blank line terminates a raw HTML block**: everything
+    after it is treated as markdown text and silently dropped.  The helpers
+    below return fragments that begin with a newline, so concatenating one
+    directly after the header produced exactly such a blank line -- the title
+    and subtitle rendered and the entire drawing vanished.
+
+    Collapsing to one line removes that whole class of failure, and also stops
+    four-space indentation being read as a markdown code block.
+    """
     parts.append("</svg></div>")
-    return "".join(parts)
+    markup = "".join(parts)
+    return " ".join(line.strip() for line in markup.splitlines() if line.strip())
+
+
+_SUBSCRIPT = re.compile(r"([A-Za-z0-9])_(?:\{([^}]+)\}|([A-Za-z0-9]+))")
+_OVERBAR = re.compile(r"([A-Za-z])-bar(?![A-Za-z])")
+
+
+def _math(text: str) -> str:
+    """Render engineering symbols with real subscripts and italic variables.
+
+    Textbook figures typeset ``z_F`` as *z* with a subscript F, not as the
+    literal characters ``z_F``.  This converts the plain-text spelling used
+    throughout this module into SVG ``tspan`` markup, so every diagram gains
+    proper symbols without each one having to hand-write them.
+
+    Subscripts are shifted with ``dy`` rather than ``baseline-shift``.
+    ``baseline-shift`` is an SVG 1.1 property that **Firefox does not
+    implement**, so it would silently render subscripts on the main baseline
+    there while looking correct in Chrome and Safari.  ``dy`` is universally
+    supported; the shift is undone by a zero-width span at the same font size,
+    so the two ``em`` offsets cancel exactly.
+
+    Stripping-section flows are written ``L-bar`` in the source and rendered
+    with a real overbar (U+0304 COMBINING MACRON) so they read as the textbook
+    symbol rather than as a hyphenated word.
+    """
+    text = _OVERBAR.sub(lambda m: m.group(1) + "̄", text)
+
+    out = []
+    index = 0
+    for match in _SUBSCRIPT.finditer(text):
+        out.append(escape(text[index:match.start()]))
+        base = match.group(1)
+        subscript = match.group(2) or match.group(3)
+        out.append(
+            f'<tspan font-style="italic">{escape(base)}</tspan>'
+            f'<tspan dy="0.3em" font-size="0.72em">{escape(subscript)}</tspan>'
+            f'<tspan dy="-0.3em" font-size="0.72em">&#8203;</tspan>'
+        )
+        index = match.end()
+    out.append(escape(text[index:]))
+    return "".join(out)
 
 
 def _node(x: int, y: int, w: int, h: int, title: str, subtitle: str = "",
@@ -79,13 +133,13 @@ def _node(x: int, y: int, w: int, h: int, title: str, subtitle: str = "",
     title_y = y + h / 2 - (7 if subtitle else -5)
     sub = (
         f'<text x="{x + w / 2}" y="{title_y + 23}" text-anchor="middle" '
-        f'fill="{_MUTED}" font-size="12.5">{escape(subtitle)}</text>'
+        f'fill="{_MUTED}" font-size="11.5">{_math(subtitle)}</text>'
         if subtitle else ""
     )
     return f"""
   <g filter="url(#shadow)">
     <rect x="{x}" y="{y}" width="{w}" height="{h}" rx="5" fill="url(#unit)" stroke="{accent}" stroke-width="1.8"/>
-    <text x="{x + w / 2}" y="{title_y}" text-anchor="middle" fill="{_TITLE}" font-size="15.5" font-weight="700">{escape(title)}</text>
+    <text x="{x + w / 2}" y="{title_y}" text-anchor="middle" fill="{_TITLE}" font-size="13.5" font-weight="600">{escape(title)}</text>
     {sub}
   </g>"""
 
@@ -102,31 +156,105 @@ def _stream(x1: int, y1: int, x2: int, y2: int, label: str, detail: str = "",
     dx = 0 if anchor == "middle" else (12 if anchor == "start" else -12)
     detail_markup = (
         f'<text x="{mx + dx}" y="{label_y + 18}" text-anchor="{anchor}" '
-        f'fill="{_MUTED}" font-size="12">{escape(detail)}</text>' if detail else ""
+        f'fill="{_MUTED}" font-size="11.5">{_math(detail)}</text>' if detail else ""
     )
     return f"""
-  <path d="M {x1} {y1} L {x2} {y2}" fill="none" stroke="{color}" stroke-width="3" marker-end="url(#{marker})"/>
-  <text x="{mx + dx}" y="{label_y}" text-anchor="{anchor}" fill="{color}" font-size="13.5" font-weight="700">{escape(label)}</text>
+  <path d="M {x1} {y1} L {x2} {y2}" fill="none" stroke="{color}" stroke-width="2" marker-end="url(#{marker})"/>
+  <text x="{mx + dx}" y="{label_y}" text-anchor="{anchor}" fill="{color}" font-size="12.5" font-weight="600">{_math(label)}</text>
   {detail_markup}"""
 
 
 def _equation_box(x: int, y: int, w: int, lines: list[str]) -> str:
     """A boxed set of equations; the first line is the heading."""
-    h = 28 + 23 * len(lines)
+    h = 26 + 21 * len(lines)
     text = "".join(
-        f'<text x="{x + 16}" y="{y + 28 + 22 * i}" '
-        f'fill="{_TITLE if i == 0 else _BODY}" font-size="{13.5 if i == 0 else 12.5}" '
-        f'font-weight="{700 if i == 0 else 400}">{escape(line)}</text>'
+        f'<text x="{x + 16}" y="{y + 26 + 20 * i}" '
+        f'fill="{_TITLE if i == 0 else _BODY}" font-size="{12.5 if i == 0 else 11.8}" '
+        f'font-weight="{600 if i == 0 else 400}">{_math(line)}</text>'
         for i, line in enumerate(lines)
     )
     return (f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="5" '
             f'fill="{theme.rgba(theme.BACKGROUND, 0.55)}" stroke="{_RULE}"/>{text}')
 
 
-def _label(x: int, y: int, text: str, color: str = _BODY, size: float = 13,
+def _label(x: int, y: int, text: str, color: str = _BODY, size: float = 12,
            anchor: str = "start", weight: int = 400) -> str:
     return (f'<text x="{x}" y="{y}" text-anchor="{anchor}" fill="{color}" '
-            f'font-size="{size}" font-weight="{weight}">{escape(text)}</text>')
+            f'font-size="{size}" font-weight="{weight}">{_math(text)}</text>')
+
+
+# ---------------------------------------------------------------------------
+# Equipment primitives
+#
+# A process diagram should look like the plant, not like a flowchart.  These
+# draw the conventional symbols -- a tray column with dished heads, a
+# shell-and-tube exchanger, a horizontal drum -- so the balance figures read
+# the way a textbook or a P&ID does.
+# ---------------------------------------------------------------------------
+
+def _column(x: int, y: int, w: int, h: int, trays: int = 8,
+            accent: str = theme.ACCENT) -> str:
+    """A tray column: cylindrical shell with dished heads and internal trays."""
+    head = w * 0.28
+    body = [
+        f'<path d="M {x} {y + head} A {w / 2} {head} 0 0 1 {x + w} {y + head} '
+        f'L {x + w} {y + h - head} A {w / 2} {head} 0 0 1 {x} {y + h - head} Z" '
+        f'fill="url(#unit)" stroke="{accent}" stroke-width="2"/>'
+    ]
+    # Trays, evenly spaced through the parallel section.
+    top, bottom = y + head + 18, y + h - head - 18
+    for i in range(trays):
+        ty = top + (bottom - top) * i / max(trays - 1, 1)
+        body.append(
+            f'<line x1="{x + 7}" y1="{ty:.1f}" x2="{x + w - 7}" y2="{ty:.1f}" '
+            f'stroke="{theme.rgba(theme.TEXT_MUTED, 0.55)}" stroke-width="1.4"/>'
+        )
+    # Front edge of the upper head, to read as a cylinder rather than a capsule.
+    body.append(
+        f'<path d="M {x} {y + head} A {w / 2} {head} 0 0 0 {x + w} {y + head}" '
+        f'fill="none" stroke="{theme.rgba(theme.TEXT_MUTED, 0.45)}" stroke-width="1.2"/>'
+    )
+    return "".join(body)
+
+
+def _exchanger(cx: int, cy: int, r: int, accent: str = theme.HEAT) -> str:
+    """The conventional heat-exchanger symbol: a circle with an internal path."""
+    return (
+        f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="url(#unit)" '
+        f'stroke="{accent}" stroke-width="2"/>'
+        f'<path d="M {cx - r} {cy} L {cx - r * 0.45} {cy} L {cx - r * 0.2} {cy - r * 0.55} '
+        f'L {cx + r * 0.2} {cy + r * 0.55} L {cx + r * 0.45} {cy} L {cx + r} {cy}" '
+        f'fill="none" stroke="{accent}" stroke-width="2" stroke-linejoin="round"/>'
+    )
+
+
+def _drum(x: int, y: int, w: int, h: int, level: float = 0.45,
+          accent: str = theme.ACCENT) -> str:
+    """A horizontal drum with a liquid level, for reflux accumulators."""
+    r = h / 2
+    shell = (
+        f'<path d="M {x + r} {y} L {x + w - r} {y} A {r} {r} 0 0 1 {x + w - r} {y + h} '
+        f'L {x + r} {y + h} A {r} {r} 0 0 1 {x + r} {y} Z" '
+        f'fill="url(#unit)" stroke="{accent}" stroke-width="2"/>'
+    )
+    liquid_y = y + h * (1 - level)
+    liquid = (
+        f'<path d="M {x + 4} {liquid_y:.1f} L {x + w - 4} {liquid_y:.1f}" '
+        f'stroke="{theme.rgba(theme.ACCENT, 0.85)}" stroke-width="2" stroke-dasharray="6 4"/>'
+    )
+    return shell + liquid
+
+
+def _envelope(x: int, y: int, w: int, h: int, label: str = "CONTROL VOLUME",
+              color: str = theme.STAGE) -> str:
+    """The dashed control-volume boundary that every balance is written on."""
+    return (
+        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="6" '
+        f'fill="{theme.rgba(color, 0.045)}" stroke="{theme.rgba(color, 0.75)}" '
+        f'stroke-width="1.8" stroke-dasharray="10 7"/>'
+        + (_label(x + 12, y + 20, label, theme.rgba(color, 0.95), 11.5, weight=700)
+           if label else "")
+    )
 
 
 def _axes(x0: int, y0: int, width: int, height: int, x_label: str, y_label: str) -> str:
@@ -162,26 +290,60 @@ def figure(svg: str, number: str, caption: str) -> str:
 
 def whole_column_balance_svg() -> str:
     p = _start("Whole-column material and energy balance envelope",
-               "Arrows define the sign convention used in every derivation", 510)
-    p.append(f'<rect x="245" y="92" width="510" height="310" fill="{theme.rgba(theme.ACCENT, 0.05)}" '
-             f'stroke="{_RULE}" stroke-width="2" stroke-dasharray="9 7"/>')
-    p.append(_label(270, 120, "CONTROL VOLUME", _SUBTITLE, 12.5, weight=700))
-    p.append(_node(390, 130, 220, 62, "TOTAL CONDENSER", "vapour to liquid"))
-    p.append(_node(390, 224, 220, 76, "TRAY COLUMN", "N equilibrium stages", theme.EQUILIBRIUM))
-    p.append(_node(390, 332, 220, 62, "PARTIAL REBOILER", "liquid to vapour", theme.FEED_BRIGHT))
-    p.append(_stream(55, 262, 390, 262, "FEED", "F, z_F, h_F"))
-    p.append(_stream(610, 151, 925, 151, "DISTILLATE", "D, x_D, h_D"))
-    p.append(_stream(610, 371, 925, 371, "BOTTOMS", "B, x_B, h_B"))
-    p.append(_stream(500, 130, 500, 82, "Q_C out", "positive magnitude", heat=True))
-    p.append(_stream(500, 458, 500, 394, "Q_R in", "positive magnitude", heat=True))
-    p.append(_equation_box(45, 414, 395, [
-        "Independent steady-state balances",
-        "Total:  F = D + B",
-        "IPA:    F z_F = D x_D + B x_B"]))
-    p.append(_equation_box(560, 414, 395, [
-        "Energy on one common reference",
+               "Every stream crossing the dashed boundary appears in the balances below", 560)
+
+    # Control volume, drawn first so the equipment sits on top of it.
+    p.append(_envelope(230, 96, 560, 322))
+
+    # --- Equipment ---------------------------------------------------------
+    p.append(_column(360, 118, 96, 278, trays=9, accent=theme.EQUILIBRIUM))
+    p.append(_label(408, 268, "N stages", theme.TEXT, 12.5, "middle", 700))
+
+    p.append(_exchanger(596, 150, 30))                      # total condenser
+    p.append(_label(556, 186, "condenser", _BODY, 12, "end", 600))
+
+    p.append(_drum(646, 176, 110, 46))                      # reflux accumulator
+    p.append(_label(701, 236, "reflux drum", _BODY, 12, "middle", 600))
+
+    p.append(_exchanger(596, 372, 30, theme.FEED_BRIGHT))   # partial reboiler
+    p.append(_label(556, 344, "reboiler", _BODY, 12, "end", 600))
+
+    # --- Piping ------------------------------------------------------------
+    line = f'stroke="{_STREAM}" stroke-width="1.9" fill="none"'
+    # Overhead vapour to condenser, condensate to drum.
+    p.append(f'<path d="M 408 130 L 408 150 L 566 150" {line} marker-end="url(#arrow)"/>')
+    p.append(_label(470, 142, "V_1", _STREAM, 12.5, "middle", 700))
+    p.append(f'<path d="M 626 150 L 701 150 L 701 176" {line} marker-end="url(#arrow)"/>')
+    # Reflux back to the top tray.
+    p.append(f'<path d="M 646 199 L 470 199 L 470 168 L 456 168" '
+             f'stroke="{_GREEN}" stroke-width="1.9" fill="none" marker-end="url(#green-arrow)"/>')
+    p.append(_label(556, 214, "reflux  L_0 = R D", _GREEN, 12.5, "middle", 700))
+    # Bottoms liquid to reboiler and vapour return.
+    p.append(f'<path d="M 408 386 L 408 372 L 566 372" '
+             f'stroke="{_GREEN}" stroke-width="1.9" fill="none" marker-end="url(#green-arrow)"/>')
+    p.append(f'<path d="M 596 342 L 596 320 L 456 320" {line} marker-end="url(#arrow)"/>')
+    p.append(_label(516, 312, "boil-up", _STREAM, 12.5, "middle", 700))
+
+    # --- Streams crossing the envelope -------------------------------------
+    p.append(_stream(60, 258, 358, 258, "FEED", "F, z_F, h_F"))
+    p.append(_stream(756, 199, 944, 199, "DISTILLATE", "D, x_D, h_D"))
+    p.append(_stream(408, 396, 408, 452, "BOTTOMS", "B, x_B, h_B", green=True))
+    # Heat streams carry only their symbol; the sign convention is stated once
+    # in the energy box rather than repeated beside each arrow, which is what
+    # previously collided with the equipment captions.
+    p.append(_stream(596, 118, 596, 66, "Q_C", heat=True))
+    p.append(_stream(596, 468, 596, 404, "Q_R", heat=True))
+
+    # --- Balances ----------------------------------------------------------
+    p.append(_equation_box(45, 452, 420, [
+        "Independent steady-state material balances",
+        "Total:      F = D + B",
+        "Light key:  F z_F = D x_D + B x_B"]))
+    p.append(_equation_box(535, 452, 420, [
+        "Energy balance on one common reference",
         "F h_F + Q_R = D h_D + B h_B + Q_C",
-        "No accumulation, reaction, or heat loss"]))
+        "Both duties are stored as positive magnitudes",
+        "No accumulation, no reaction, no heat loss"]))
     return _finish(p)
 
 
@@ -199,9 +361,9 @@ def model_map_svg() -> str:
     for x, y, title, sub, color in nodes:
         p.append(_node(x, y, 205, 82, title, sub, color))
     for x in (250, 480, 710):
-        p.append(f'<path d="M{x} 166 L{x + 25} 166" stroke="{_MUTED}" stroke-width="3" marker-end="url(#thin-arrow)"/>')
-    p.append(f'<path d="M837 207 C837 245 710 250 710 270" stroke="{_MUTED}" stroke-width="3" fill="none" marker-end="url(#thin-arrow)"/>')
-    p.append(f'<path d="M710 311 L735 311" stroke="{_MUTED}" stroke-width="3" marker-end="url(#thin-arrow)"/>')
+        p.append(f'<path d="M{x} 166 L{x + 25} 166" stroke="{_MUTED}" stroke-width="1.8" marker-end="url(#thin-arrow)"/>')
+    p.append(f'<path d="M837 207 C837 245 710 250 710 270" stroke="{_MUTED}" stroke-width="1.8" fill="none" marker-end="url(#thin-arrow)"/>')
+    p.append(f'<path d="M710 311 L735 311" stroke="{_MUTED}" stroke-width="1.8" marker-end="url(#thin-arrow)"/>')
     p.append(_equation_box(45, 255, 400, [
         "Always close the balances first",
         "F = D + B;   F z_F = D x_D + B x_B",
@@ -239,7 +401,7 @@ def nrtl_local_composition_svg() -> str:
 
     p.append(cell(70, 105, "Random mixing (ideal)", "every neighbour equally likely", random_pattern, theme.TEXT_FAINT))
     p.append(cell(375, 105, "Local composition (real)", "like molecules cluster", local_pattern, theme.EQUILIBRIUM))
-    p.append(f'<path d="M330 200 L370 200" stroke="{_MUTED}" stroke-width="3" marker-end="url(#thin-arrow)"/>')
+    p.append(f'<path d="M330 200 L370 200" stroke="{_MUTED}" stroke-width="1.8" marker-end="url(#thin-arrow)"/>')
     p.append(_equation_box(660, 108, 285, [
         "NRTL encodes the clustering",
         "tau_ij = B_ij / T   (interaction energy)",
@@ -254,46 +416,110 @@ def nrtl_local_composition_svg() -> str:
 
 
 def txy_anatomy_svg() -> str:
+    """The real IPA/water phase envelope, annotated.
+
+    Drawn from :func:`src.thermo.get_vle_curves` rather than from sketched
+    Bezier curves, so the bubble and dew branches, the azeotrope and both pure
+    boiling points are the values the simulator actually uses.  A schematic
+    that disagrees with the model it illustrates teaches the wrong shape.
+    """
+    import src.thermo as thermo
+
+    vle = thermo.get_vle_curves(101325.0, 161)
+    x, y, T = vle["x"], vle["y"], vle["T_bubble_C"]
+    x_azeo, T_azeo = float(vle["x_azeo"]), float(vle["T_azeo_C"])
+    T_water, T_ipa = float(T[0]), float(T[-1])
+
+    # Plot frame.
+    left, right, top, bottom = 130, 660, 112, 396
+    t_lo, t_hi = 78.5, 101.5
+
+    def px(value):
+        return left + (right - left) * float(value)
+
+    def py(value):
+        return bottom - (bottom - top) * (float(value) - t_lo) / (t_hi - t_lo)
+
+    def polyline(xs, ts):
+        return " ".join(f"{px(a):.1f},{py(b):.1f}" for a, b in zip(xs, ts))
+
     p = _start("Anatomy of the T-x-y diagram and the azeotropic barrier",
-               "Reading the phase envelope, and why distillation stops at the azeotrope", 470)
-    x0, y0, w, h = 110, 390, 560, 280
-    p.append(_axes(x0, y0, w, h, "IPA mole fraction x, y", "Temperature"))
+               "Calculated IPA/water envelope at 1 atm, not a sketch", 492)
 
-    # Schematic bubble and dew curves with a minimum-boiling azeotrope near x=0.67.
-    bubble = "M 110 170 C 230 250, 330 320, 485 332 C 560 337, 620 300, 670 240"
-    dew = "M 110 170 C 250 195, 380 268, 485 332 C 570 336, 630 296, 670 240"
-    p.append(f'<path d="{bubble}" fill="none" stroke="{theme.ACCENT}" stroke-width="3"/>')
-    p.append(f'<path d="{dew}" fill="none" stroke="{theme.VAPOR}" stroke-width="3"/>')
-    p.append(f'<path d="{bubble} L 670 240 C 630 296, 570 336, 485 332 C 380 268, 250 195, 110 170 Z" '
-             f'fill="{theme.rgba(theme.ACCENT, 0.10)}" stroke="none"/>')
+    # Two-phase region: bubble curve out, dew curve back.
+    p.append(f'<polygon points="{polyline(x, T)} {polyline(y[::-1], T[::-1])}" '
+             f'fill="{theme.rgba(theme.ACCENT, 0.13)}" stroke="none"/>')
 
-    p.append(_label(150, 150, "water boiling point", theme.TEXT_MUTED, 12))
-    p.append(_label(690, 232, "IPA boiling point", theme.TEXT_MUTED, 12))
-    p.append(_label(215, 218, "superheated vapour", theme.VAPOR, 12.5, weight=600))
-    p.append(_label(255, 300, "two-phase", theme.TEXT_MUTED, 12.5, weight=600))
-    p.append(_label(160, 355, "subcooled liquid", theme.ACCENT, 12.5, weight=600))
-    p.append(_label(330, 246, "dew curve  T(y)", theme.VAPOR, 12.5, weight=600))
-    p.append(_label(300, 335, "bubble curve  T(x)", theme.ACCENT, 12.5, weight=600))
+    # Axes.
+    p.append(f'<path d="M {left} {top - 8} L {left} {bottom} L {right + 14} {bottom}" '
+             f'fill="none" stroke="{_RULE}" stroke-width="1.6"/>')
+    for tick in (0.0, 0.25, 0.5, 0.75, 1.0):
+        p.append(f'<path d="M {px(tick):.1f} {bottom} L {px(tick):.1f} {bottom + 6}" '
+                 f'stroke="{_RULE}" stroke-width="1.4"/>')
+        p.append(_label(px(tick), bottom + 22, f"{tick:.2f}", _MUTED, 11, "middle"))
+    for tick in (80, 85, 90, 95, 100):
+        p.append(f'<path d="M {left - 6} {py(tick):.1f} L {left} {py(tick):.1f}" '
+                 f'stroke="{_RULE}" stroke-width="1.4"/>')
+        p.append(_label(left - 11, py(tick) + 4, str(tick), _MUTED, 11, "end"))
+    p.append(_label((left + right) / 2, bottom + 44,
+                    "isopropanol mole fraction   x, y", _BODY, 12, "middle", 600))
+    p.append(f'<text x="{left - 44}" y="{(top + bottom) / 2}" fill="{_BODY}" '
+             f'font-size="12" font-weight="600" text-anchor="middle" '
+             f'transform="rotate(-90 {left - 44} {(top + bottom) / 2})">temperature  (C)</text>')
 
-    # Azeotrope
-    p.append(f'<circle cx="485" cy="332" r="7" fill="{theme.STAGE}" stroke="{theme.BACKGROUND}" stroke-width="2"/>')
-    p.append(f'<path d="M485 332 L485 390" stroke="{theme.STAGE}" stroke-width="1.8" stroke-dasharray="5 4"/>')
-    p.append(_label(485, 412, "x_azeo", theme.STAGE, 13, "middle", 700))
-    p.append(_label(497, 320, "azeotrope: bubble and dew curves touch, y = x", theme.STAGE, 12.5, weight=600))
+    # The two branches.
+    p.append(f'<polyline points="{polyline(x, T)}" fill="none" '
+             f'stroke="{theme.ACCENT}" stroke-width="2.4"/>')
+    p.append(f'<polyline points="{polyline(y, T)}" fill="none" '
+             f'stroke="{theme.VAPOR}" stroke-width="2.4"/>')
 
-    # Barrier shading
-    p.append(f'<rect x="485" y="120" width="185" height="270" fill="{theme.rgba(theme.DANGER, 0.10)}" stroke="none"/>')
-    p.append(_label(578, 140, "unreachable from a", theme.DANGER, 12, "middle", 600))
-    p.append(_label(578, 156, "water-rich feed", theme.DANGER, 12, "middle", 600))
+    # Region labels, placed inside the phases they name.
+    p.append(_label(px(0.30), py(95.5), "superheated vapour", theme.VAPOR, 12, "middle", 600))
+    p.append(_label(px(0.34), py(89.0), "two phases", theme.TEXT_MUTED, 12, "middle", 600))
+    p.append(_label(px(0.22), py(82.4), "subcooled liquid", theme.ACCENT, 12, "middle", 600))
+    p.append(_label(px(0.06) + 8, py(93.0), "bubble curve  T(x)", theme.ACCENT, 11.5, "start"))
+    p.append(_label(px(0.52), py(96.5), "dew curve  T(y)", theme.VAPOR, 11.5, "start"))
 
-    p.append(_equation_box(700, 175, 265, [
-        "How to read a vertical cut",
-        "below bubble curve: all liquid",
-        "above dew curve: all vapour",
-        "between: L and V at the two",
-        "curve intersections at that T"]))
-    p.append(_label(110, 440, "A minimum-boiling azeotrope is the LOW point of the envelope, so it leaves the column as distillate.",
-                    _BODY, 13))
+    # Pure boiling points.
+    for cx, cy, text, anchor, dx in (
+        (0.0, T_water, f"water  {T_water:.1f} C", "start", 10),
+        (1.0, T_ipa, f"IPA  {T_ipa:.1f} C", "end", -10),
+    ):
+        p.append(f'<circle cx="{px(cx):.1f}" cy="{py(cy):.1f}" r="4" '
+                 f'fill="{theme.TEXT_MUTED}"/>')
+        p.append(_label(px(cx) + dx, py(cy) - 10, text, theme.TEXT_MUTED, 11.5, anchor, 600))
+
+    # The azeotrope: the minimum of the envelope, where the curves touch.
+    p.append(f'<path d="M {px(x_azeo):.1f} {py(T_azeo):.1f} L {px(x_azeo):.1f} {bottom}" '
+             f'stroke="{theme.STAGE}" stroke-width="1.5" stroke-dasharray="5 4"/>')
+    p.append(f'<circle cx="{px(x_azeo):.1f}" cy="{py(T_azeo):.1f}" r="5.5" '
+             f'fill="{theme.STAGE}" stroke="{theme.BACKGROUND}" stroke-width="1.6"/>')
+    p.append(_label(px(x_azeo) - 12, py(T_azeo) + 18,
+                    f"azeotrope   x = {x_azeo:.4f}", theme.STAGE, 11.5, "end", 700))
+    p.append(_label(px(x_azeo) - 12, py(T_azeo) + 33,
+                    f"{T_azeo:.2f} C,  y = x", theme.STAGE, 11.5, "end", 600))
+
+    # The barrier.
+    p.append(f'<rect x="{px(x_azeo):.1f}" y="{top - 8}" '
+             f'width="{right - px(x_azeo):.1f}" height="{bottom - top + 8:.1f}" '
+             f'fill="{theme.rgba(theme.DANGER, 0.09)}" stroke="none"/>')
+    p.append(_label((px(x_azeo) + right) / 2, top + 14,
+                    "unreachable from a water-rich feed", theme.DANGER, 11.5, "middle", 600))
+
+    p.append(_equation_box(700, 130, 262, [
+        "Reading a vertical cut",
+        "below the bubble curve: all liquid",
+        "above the dew curve: all vapour",
+        "between: liquid and vapour at the",
+        "two curve intersections at that T"]))
+    p.append(_equation_box(700, 268, 262, [
+        "Why the barrier exists",
+        "left of x_azeo the vapour is richer",
+        "in IPA, so distillation moves right;",
+        "at x_azeo y = x and it stops."]))
+    p.append(_label(130, 470,
+                    "The azeotrope is the LOWEST boiling point of the mixture, so it leaves as distillate and caps x_D.",
+                    _BODY, 12))
     return _finish(p)
 
 
@@ -375,12 +601,12 @@ def flash_algorithm_svg() -> str:
     for x, y, title, sub, color in nodes:
         p.append(_node(x, y, 205, 78, title, sub, color))
     for x in (260, 480, 710):
-        p.append(f'<path d="M{x} 159 L{x + 15} 159" stroke="{_MUTED}" stroke-width="3" marker-end="url(#thin-arrow)"/>')
-    p.append(f'<path d="M837 198 C837 245 650 230 620 270" stroke="{_MUTED}" stroke-width="3" fill="none" marker-end="url(#thin-arrow)"/>')
-    p.append(f'<path d="M710 309 L735 309" stroke="{_MUTED}" stroke-width="3" marker-end="url(#thin-arrow)"/>')
-    p.append(f'<path d="M505 309 C390 400 140 395 140 198" stroke="{_HEAT}" stroke-width="2.5" fill="none" stroke-dasharray="8 6" marker-end="url(#heat-arrow)"/>')
+        p.append(f'<path d="M{x} 159 L{x + 15} 159" stroke="{_MUTED}" stroke-width="1.8" marker-end="url(#thin-arrow)"/>')
+    p.append(f'<path d="M837 198 C837 245 650 230 620 270" stroke="{_MUTED}" stroke-width="1.8" fill="none" marker-end="url(#thin-arrow)"/>')
+    p.append(f'<path d="M710 309 L735 309" stroke="{_MUTED}" stroke-width="1.8" marker-end="url(#thin-arrow)"/>')
+    p.append(f'<path d="M505 309 C390 400 140 395 140 198" stroke="{_HEAT}" stroke-width="1.8" fill="none" stroke-dasharray="8 6" marker-end="url(#heat-arrow)"/>')
     p.append(_label(280, 398, "outer bracketed T update while |r_H| > tolerance", _HEAT, 12.5, weight=700))
-    p.append(f'<path d="M835 120 C835 85 610 82 610 120" stroke="{theme.EQUILIBRIUM}" stroke-width="2.5" fill="none" stroke-dasharray="7 5" marker-end="url(#thin-arrow)"/>')
+    p.append(f'<path d="M835 120 C835 85 610 82 610 120" stroke="{theme.EQUILIBRIUM}" stroke-width="1.8" fill="none" stroke-dasharray="7 5" marker-end="url(#thin-arrow)"/>')
     p.append(_label(720, 78, "inner gamma-composition iteration", theme.EQUILIBRIUM, 12, "middle"))
     return _finish(p)
 
@@ -391,26 +617,44 @@ def flash_algorithm_svg() -> str:
 
 def mccabe_balance_svg() -> str:
     p = _start("McCabe-Thiele section envelopes",
-               "The operating-line slope and intercept follow from these stream balances", 505)
-    p.append(f'<line x1="500" y1="88" x2="500" y2="472" stroke="{_RULE}" stroke-width="2"/>')
-    p.append(_label(250, 112, "RECTIFYING SECTION", theme.ACCENT, 16, "middle", 700))
-    p.append(_label(750, 112, "STRIPPING SECTION", theme.FEED_BRIGHT, 16, "middle", 700))
-    p.append(f'<rect x="120" y="145" width="260" height="180" fill="{theme.rgba(theme.ACCENT, 0.06)}" stroke="{_RULE}" stroke-width="2" stroke-dasharray="8 6"/>')
-    p.append(_node(155, 195, 190, 78, "UPPER SECTION", "+ total condenser"))
-    p.append(_stream(250, 355, 250, 273, "V, y_n+1", "enters from below"))
-    p.append(_stream(180, 273, 180, 355, "L, x_n", "leaves downward", green=True))
-    p.append(_stream(322, 220, 445, 220, "D, x_D", "product"))
-    p.append(f'<rect x="620" y="145" width="260" height="180" fill="{theme.rgba(theme.FEED, 0.06)}" stroke="{_RULE}" stroke-width="2" stroke-dasharray="8 6"/>')
-    p.append(_node(655, 195, 190, 78, "LOWER SECTION", "+ partial reboiler", theme.FEED_BRIGHT))
-    p.append(_stream(700, 126, 700, 195, "L-bar, x_m", "enters from above", green=True))
-    p.append(_stream(800, 195, 800, 126, "V-bar, y_m+1", "leaves upward"))
-    p.append(_stream(822, 246, 945, 246, "B, x_B", "product"))
-    p.append(_equation_box(55, 375, 400, [
-        "Rectifying balance",
+               "Each operating line is the component balance for the envelope drawn around it", 540)
+
+    # One column, cut at the feed into two envelopes.
+    p.append(_column(430, 110, 96, 300, trays=10, accent=theme.EQUILIBRIUM))
+    p.append(f'<line x1="404" y1="262" x2="552" y2="262" '
+             f'stroke="{theme.STAGE}" stroke-width="2" stroke-dasharray="7 5"/>')
+    p.append(_label(560, 258, "feed stage", theme.STAGE, 12, "start", 700))
+
+    # Rectifying envelope: everything above the cut, plus the condenser.
+    p.append(_envelope(300, 100, 300, 152, "RECTIFYING ENVELOPE", theme.ACCENT))
+    p.append(_label(150, 150, "RECTIFYING SECTION", theme.ACCENT, 15, "start", 700))
+    p.append(f'<path d="M 402 200 L 402 246" stroke="{_GREEN}" stroke-width="2.6" '
+             f'fill="none" marker-end="url(#green-arrow)"/>')
+    p.append(_label(394, 226, "L, x_n", _GREEN, 12.5, "end", 700))
+    p.append(f'<path d="M 554 246 L 554 200" stroke="{_STREAM}" stroke-width="2.6" '
+             f'fill="none" marker-end="url(#arrow)"/>')
+    p.append(_label(562, 226, "V, y_n+1", _STREAM, 12.5, "start", 700))
+    p.append(_stream(600, 140, 900, 140, "D, x_D", "distillate product"))
+
+    # Stripping envelope: everything below the cut, plus the reboiler.
+    p.append(_envelope(300, 272, 300, 150, "STRIPPING ENVELOPE", theme.FEED_BRIGHT))
+    p.append(_label(150, 400, "STRIPPING SECTION", theme.FEED_BRIGHT, 15, "start", 700))
+    p.append(f'<path d="M 402 288 L 402 336" stroke="{_GREEN}" stroke-width="2.6" '
+             f'fill="none" marker-end="url(#green-arrow)"/>')
+    p.append(_label(394, 316, "L-bar, x_m", _GREEN, 12.5, "end", 700))
+    p.append(f'<path d="M 554 336 L 554 288" stroke="{_STREAM}" stroke-width="2.6" '
+             f'fill="none" marker-end="url(#arrow)"/>')
+    p.append(_label(562, 316, "V-bar, y_m+1", _STREAM, 12.5, "start", 700))
+    p.append(_stream(600, 400, 900, 400, "B, x_B", "bottoms product", green=True))
+
+    p.append(_stream(60, 262, 428, 262, "F, z_F", "feed"))
+
+    p.append(_equation_box(45, 440, 440, [
+        "Rectifying envelope",
         "V = L + D;   V y_n+1 = L x_n + D x_D",
         "y_n+1 = [R/(R+1)] x_n + x_D/(R+1)"]))
-    p.append(_equation_box(545, 375, 400, [
-        "Stripping balance",
+    p.append(_equation_box(515, 440, 440, [
+        "Stripping envelope",
         "L-bar = V-bar + B;   L-bar x_m = V-bar y_m+1 + B x_B",
         "y_m+1 = (L-bar/V-bar) x_m - (B/V-bar) x_B"]))
     return _finish(p)
@@ -428,12 +672,15 @@ def q_line_family_svg() -> str:
     p.append(_label(x0 + 92, y0 - 172, "equilibrium curve", theme.ACCENT, 12.5, weight=600))
 
     fx, fy = x0 + 140, y0 - 140     # the feed point on the diagonal
+    # Label offsets are chosen so the five captions sit at clearly separated
+    # angles around the pencil of lines; overlapping captions were what made
+    # this figure hard to read.
     lines = [
-        (fx, fy - 115, fx, fy, "q > 1", "subcooled liquid", theme.EQUILIBRIUM, -6, -122),
-        (fx, fy - 118, fx, fy, "q = 1", "saturated liquid", theme.ACCENT, 42, -104),
-        (fx + 108, fy - 92, fx, fy, "0 < q < 1", "two-phase feed", theme.FEED_BRIGHT, 116, -96),
-        (fx + 122, fy, fx, fy, "q = 0", "saturated vapour", theme.STAGE, 130, 4),
-        (fx + 118, fy + 78, fx, fy, "q < 0", "superheated vapour", theme.HEAT, 126, 88),
+        (0, 0, 0, 0, "q > 1", "subcooled liquid", theme.EQUILIBRIUM, -172, -104),
+        (0, 0, 0, 0, "q = 1", "saturated liquid", theme.ACCENT, 4, -142),
+        (0, 0, 0, 0, "0 < q < 1", "two-phase feed", theme.FEED_BRIGHT, 132, -74),
+        (0, 0, 0, 0, "q = 0", "saturated vapour", theme.STAGE, 140, 2),
+        (0, 0, 0, 0, "q < 0", "superheated vapour", theme.HEAT, 132, 86),
     ]
     slopes = [
         (fx - 2, fy - 118, fx + 2, fy + 30),          # near-vertical, leaning back
@@ -469,27 +716,61 @@ def q_line_family_svg() -> str:
 
 def mesh_stage_svg() -> str:
     p = _start("One equilibrium stage: the complete MESH envelope",
-               "Every stage closes material, equilibrium, summation and enthalpy equations", 500)
-    p.append(f'<rect x="170" y="110" width="420" height="230" fill="{theme.rgba(theme.EQUILIBRIUM, 0.06)}" '
-             f'stroke="{_RULE}" stroke-width="2" stroke-dasharray="9 7"/>')
-    p.append(_node(300, 184, 170, 82, "STAGE n", "T_n, P_n; equilibrium", theme.EQUILIBRIUM))
-    p.append(_stream(65, 145, 300, 205, "L_n-1 enters", "x_n-1, h_n-1", green=True))
-    p.append(_stream(65, 315, 300, 245, "V_n+1 enters", "y_n+1, H_n+1"))
-    p.append(_stream(470, 205, 695, 145, "V_n leaves", "y_n, H_n"))
-    p.append(_stream(470, 245, 695, 315, "L_n leaves", "x_n, h_n", green=True))
-    p.append(_equation_box(625, 110, 330, [
-        "M - component balance",
-        "L_n-1 x_n-1 + V_n+1 y_n+1",
-        "  = L_n x_n + V_n y_n"]))
-    p.append(_equation_box(625, 226, 330, [
-        "E, S, H closures",
-        "y_i = K_i(T,P,x) x_i;  sum x = sum y = 1",
-        "L_n-1 h_n-1 + V_n+1 H_n+1",
-        "  = L_n h_n + V_n H_n"]))
-    p.append(_equation_box(55, 375, 515, [
-        "Total balance",
+               "Liquid falls, vapour rises, and the two leaving streams are in equilibrium", 520)
+
+    # Three trays, with the middle one as the stage under analysis.
+    tray_x, tray_w = 250, 250
+    for ty, faded in ((150, True), (250, False), (350, True)):
+        opacity = 0.35 if faded else 1.0
+        p.append(
+            f'<g opacity="{opacity}">'
+            f'<rect x="{tray_x}" y="{ty}" width="{tray_w}" height="8" rx="2" '
+            f'fill="{theme.rgba(theme.EQUILIBRIUM, 0.55)}" stroke="{theme.EQUILIBRIUM}"/>'
+            f'</g>'
+        )
+    # Shell walls.
+    for wall_x in (tray_x - 26, tray_x + tray_w + 26):
+        p.append(f'<line x1="{wall_x}" y1="118" x2="{wall_x}" y2="400" '
+                 f'stroke="{theme.rgba(theme.TEXT_MUTED, 0.5)}" stroke-width="2"/>')
+
+    p.append(_envelope(196, 196, 358, 112, "STAGE n ENVELOPE", theme.EQUILIBRIUM))
+    p.append(_label(375, 240, "STAGE n", _TITLE, 15.5, "middle", 700))
+    p.append(_label(375, 292, "T_n, P_n — leaving streams in equilibrium",
+                    _MUTED, 12, "middle"))
+
+    # Liquid descends on the left, vapour ascends on the right.
+    green = f'stroke="{_GREEN}" stroke-width="1.9" fill="none"'
+    blue = f'stroke="{_STREAM}" stroke-width="1.9" fill="none"'
+    p.append(f'<path d="M 290 150 L 290 196" {green} marker-end="url(#green-arrow)"/>')
+    p.append(_label(282, 176, "L_n-1", _GREEN, 12.5, "end", 700))
+    p.append(_label(282, 191, "x_n-1, h_n-1", _MUTED, 11.5, "end"))
+
+    p.append(f'<path d="M 290 308 L 290 356" {green} marker-end="url(#green-arrow)"/>')
+    p.append(_label(282, 334, "L_n", _GREEN, 12.5, "end", 700))
+    p.append(_label(282, 349, "x_n, h_n", _MUTED, 11.5, "end"))
+
+    p.append(f'<path d="M 462 356 L 462 308" {blue} marker-end="url(#arrow)"/>')
+    p.append(_label(470, 334, "V_n+1", _STREAM, 12.5, "start", 700))
+    p.append(_label(470, 349, "y_n+1, H_n+1", _MUTED, 11.5, "start"))
+
+    p.append(f'<path d="M 462 196 L 462 150" {blue} marker-end="url(#arrow)"/>')
+    p.append(_label(470, 176, "V_n", _STREAM, 12.5, "start", 700))
+    p.append(_label(470, 191, "y_n, H_n", _MUTED, 11.5, "start"))
+
+    p.append(_equation_box(610, 118, 345, [
+        "M — component balance",
+        "L_n-1 x_n-1 + V_n+1 y_n+1 = L_n x_n + V_n y_n"]))
+    p.append(_equation_box(610, 208, 345, [
+        "E, S — equilibrium and summation",
+        "y_i = K_i(T,P,x) x_i",
+        "sum of x = sum of y = 1"]))
+    p.append(_equation_box(610, 320, 345, [
+        "H — energy balance",
+        "L_n-1 h_n-1 + V_n+1 H_n+1 = L_n h_n + V_n H_n"]))
+    p.append(_equation_box(45, 420, 520, [
+        "Total balance, and why it must be checked here",
         "L_n-1 + V_n+1 = L_n + V_n",
-        "Residuals must be checked stage by stage, not only globally."]))
+        "Global closure can hide equal-and-opposite stage errors."]))
     return _finish(p)
 
 
@@ -606,7 +887,13 @@ def column_geometry_svg() -> str:
         p.append(_label(cx + width + 28, y + height / 2 + 16, detail, _MUTED, 11.5))
         y += height
 
-    p.append(f'<path d="M{cx - 30} {top} L{cx - 30} {y}" stroke="{theme.TEXT_MUTED}" stroke-width="2" marker-start="url(#thin-arrow)" marker-end="url(#thin-arrow)"/>')
+    # Two outward arrows rather than one line with marker-start: that avoids
+    # orient="auto-start-reverse", which older Safari does not honour.
+    mid = (top + y) / 2
+    p.append(f'<path d="M{cx - 30} {mid} L{cx - 30} {top}" stroke="{theme.TEXT_MUTED}" '
+             f'stroke-width="2" marker-end="url(#thin-arrow)"/>')
+    p.append(f'<path d="M{cx - 30} {mid} L{cx - 30} {y}" stroke="{theme.TEXT_MUTED}" '
+             f'stroke-width="2" marker-end="url(#thin-arrow)"/>')
     p.append(f'<text x="{cx - 42}" y="{(top + y) / 2}" fill="{theme.TEXT_MUTED}" font-size="13" font-weight="700" '
              f'transform="rotate(-90 {cx - 42} {(top + y) / 2})" text-anchor="middle">H_tangent</text>')
 
@@ -643,7 +930,7 @@ def sizing_workflow_svg() -> str:
         (500, 450, 500, 486),
     ]
     for x1, y1, x2, y2 in arrows:
-        p.append(f'<path d="M{x1} {y1} L{x2} {y2}" stroke="{_MUTED}" stroke-width="2.5" fill="none" marker-end="url(#thin-arrow)"/>')
+        p.append(f'<path d="M{x1} {y1} L{x2} {y2}" stroke="{_MUTED}" stroke-width="1.8" fill="none" marker-end="url(#thin-arrow)"/>')
     return _finish(p)
 
 
@@ -664,7 +951,7 @@ def safety_layers_svg() -> str:
     for x, y, title, sub, color in nodes:
         p.append(_node(x, y, 150, 90, title, sub, color))
     for x in (195, 395, 595, 795):
-        p.append(f'<path d="M{x} 180 L{x + 50} 180" stroke="{_MUTED}" stroke-width="3" marker-end="url(#thin-arrow)"/>')
+        p.append(f'<path d="M{x} 180 L{x + 50} 180" stroke="{_MUTED}" stroke-width="1.8" marker-end="url(#thin-arrow)"/>')
     p.append(_equation_box(85, 275, 390, [
         "Dynamic energy inventory",
         "dU/dt = F h_F + Q_R - D h_D - B h_B - Q_C",
