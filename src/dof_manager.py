@@ -10,11 +10,11 @@ ALL_SPECS = ['x_D', 'x_B', 'D', 'B', 'R', 'Q_C', 'Q_R', 'Rec_LK', 'Rec_HK']
 SPEC_LABELS = {
     'x_D': 'Distillate IPA Mole Fraction (x_D)',
     'x_B': 'Bottoms IPA Mole Fraction (x_B)',
-    'D': 'Distillate Flow Rate (D, mol/s or kmol/h)',
-    'B': 'Bottoms Flow Rate (B, mol/s or kmol/h)',
+    'D': 'Distillate Flow Rate (D)',
+    'B': 'Bottoms Flow Rate (B)',
     'R': 'Reflux Ratio (R = L_0 / D)',
-    'Q_C': 'Condenser Heat Duty (Q_C, kW)',
-    'Q_R': 'Reboiler Heat Duty (Q_R, kW)',
+    'Q_C': 'Condenser Heat Duty (Q_C)',
+    'Q_R': 'Reboiler Heat Duty (Q_R)',
     'Rec_LK': 'Light Key (IPA) Recovery in Distillate (Rec_LK)',
     'Rec_HK': 'Heavy Key (Water) Recovery in Bottoms (Rec_HK)'
 }

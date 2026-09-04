@@ -7,6 +7,7 @@
 
 import plotly.graph_objects as go
 import numpy as np
+from src.units import from_canonical
 
 DARK_LAYOUT_BASE = dict(
     template="plotly_dark",
@@ -28,11 +29,13 @@ DARK_LAYOUT_BASE = dict(
     )
 )
 
-def plot_xy(vle_data, col_result, z_F):
+def plot_xy(vle_data, col_result, z_F, composition_unit="mole fraction"):
     """Generate McCabe-Thiele (x-y) Diagram with 1:1 aspect ratio axes and side legend."""
     fig = go.Figure()
-    xs = vle_data['x']
-    ys = vle_data['y']
+    convert_x = lambda values: [from_canonical(v, "composition", composition_unit) for v in values]
+    xs = convert_x(vle_data['x'])
+    ys = convert_x(vle_data['y'])
+    axis_max = from_canonical(1.0, "composition", composition_unit)
     
     # VLE Equilibrium Curve
     fig.add_trace(go.Scatter(
@@ -44,18 +47,19 @@ def plot_xy(vle_data, col_result, z_F):
     
     # y = x Diagonal
     fig.add_trace(go.Scatter(
-        x=[0, 1], y=[0, 1],
+        x=[0, axis_max], y=[0, axis_max],
         mode='lines',
         name='y = x',
         line=dict(color='#64748b', width=1.5, dash='dash')
     ))
     
     # Azeotrope
-    x_az = vle_data['x_azeo']
+    x_az_raw = vle_data['x_azeo']
+    x_az = from_canonical(x_az_raw, "composition", composition_unit)
     fig.add_trace(go.Scatter(
         x=[x_az], y=[x_az],
         mode='markers',
-        name=f'Azeotrope ({x_az:.3f})',
+        name=f'Azeotrope ({x_az:.3g} {composition_unit})',
         marker=dict(symbol='diamond', size=12, color='#facc15')
     ))
     
@@ -64,7 +68,7 @@ def plot_xy(vle_data, col_result, z_F):
     # Rectifying Operating Line
     if 'rectifying_x' in mccabe:
         fig.add_trace(go.Scatter(
-            x=mccabe['rectifying_x'], y=mccabe['rectifying_y'],
+            x=convert_x(mccabe['rectifying_x']), y=convert_x(mccabe['rectifying_y']),
             mode='lines',
             name='Rectifying Line',
             line=dict(color='#06b6d4', width=2.5)
@@ -73,7 +77,7 @@ def plot_xy(vle_data, col_result, z_F):
     # Stripping Operating Line
     if 'stripping_x' in mccabe:
         fig.add_trace(go.Scatter(
-            x=mccabe['stripping_x'], y=mccabe['stripping_y'],
+            x=convert_x(mccabe['stripping_x']), y=convert_x(mccabe['stripping_y']),
             mode='lines',
             name='Stripping Line',
             line=dict(color='#f97316', width=2.5)
@@ -82,7 +86,7 @@ def plot_xy(vle_data, col_result, z_F):
     # Feed q-Line
     if 'q_line_x' in mccabe:
         fig.add_trace(go.Scatter(
-            x=mccabe['q_line_x'], y=mccabe['q_line_y'],
+            x=convert_x(mccabe['q_line_x']), y=convert_x(mccabe['q_line_y']),
             mode='lines',
             name='Feed q-Line',
             line=dict(color='#10b981', width=2.5, dash='dash')
@@ -93,15 +97,16 @@ def plot_xy(vle_data, col_result, z_F):
     stair_y = mccabe.get('staircase_y', [])
     if len(stair_x) > 0:
         fig.add_trace(go.Scatter(
-            x=stair_x, y=stair_y,
+            x=convert_x(stair_x), y=convert_x(stair_y),
             mode='lines',
             name=f"Staircase ({col_result['total_stages']} Stages)",
             line=dict(color='#ef4444', width=2.5)
         ))
     
     # Product & Feed Points
-    xD = col_result['x_D']
-    xB = col_result['x_B']
+    xD = from_canonical(col_result['x_D'], "composition", composition_unit)
+    xB = from_canonical(col_result['x_B'], "composition", composition_unit)
+    z_F = from_canonical(z_F, "composition", composition_unit)
     fig.add_trace(go.Scatter(
         x=[xD, z_F, xB], y=[xD, z_F, xB],
         mode='markers+text',
@@ -115,18 +120,18 @@ def plot_xy(vle_data, col_result, z_F):
     fig.update_layout(
         **DARK_LAYOUT_BASE,
         xaxis=dict(
-            title=dict(text="<b>Liquid IPA Mole Fraction (x)</b>", font=dict(size=15, color="#e2e8f0")),
+            title=dict(text=f"<b>Liquid IPA composition x ({composition_unit})</b>", font=dict(size=15, color="#e2e8f0")),
             tickfont=dict(size=13, color="#cbd5e1"),
-            range=[0.0, 1.0],
+            range=[0.0, axis_max],
             autorange=False,
             fixedrange=False,
             constrain="domain",
             gridcolor="#334155"
         ),
         yaxis=dict(
-            title=dict(text="<b>Vapor IPA Mole Fraction (y)</b>", font=dict(size=15, color="#e2e8f0")),
+            title=dict(text=f"<b>Vapor IPA composition y ({composition_unit})</b>", font=dict(size=15, color="#e2e8f0")),
             tickfont=dict(size=13, color="#cbd5e1"),
-            range=[0.0, 1.0],
+            range=[0.0, axis_max],
             autorange=False,
             fixedrange=False,
             scaleanchor="x",
@@ -137,12 +142,13 @@ def plot_xy(vle_data, col_result, z_F):
     )
     return fig
 
-def plot_txy(vle_data, col_result, z_F, P):
+def plot_txy(vle_data, col_result, z_F, P, composition_unit="mole fraction", temperature_unit="°C"):
     """Generate Constant P VLE (T-x-y) Diagram with side legend."""
     fig = go.Figure()
-    xs = vle_data['x']
-    T_C = vle_data['T_bubble_C']
-    ys = vle_data['y']
+    xs = [from_canonical(v, "composition", composition_unit) for v in vle_data['x']]
+    T_C = [from_canonical(v, "temperature", temperature_unit) for v in vle_data['T_bubble_C']]
+    ys = [from_canonical(v, "composition", composition_unit) for v in vle_data['y']]
+    axis_max = from_canonical(1.0, "composition", composition_unit)
     
     fig.add_trace(go.Scatter(
         x=xs, y=T_C,
@@ -158,15 +164,16 @@ def plot_txy(vle_data, col_result, z_F, P):
         line=dict(color='#f87171', width=3)
     ))
     
-    x_az = vle_data['x_azeo']
-    T_az_C = vle_data['T_azeo_C']
+    x_az = from_canonical(vle_data['x_azeo'], "composition", composition_unit)
+    T_az_C = from_canonical(vle_data['T_azeo_C'], "temperature", temperature_unit)
     fig.add_trace(go.Scatter(
         x=[x_az], y=[T_az_C],
         mode='markers',
-        name=f'Azeotrope ({x_az:.3f})',
+        name=f'Azeotrope ({x_az:.3g} {composition_unit})',
         marker=dict(symbol='diamond', size=12, color='#facc15')
     ))
     
+    z_F = from_canonical(z_F, "composition", composition_unit)
     fig.add_trace(go.Scatter(
         x=[z_F, z_F], y=[min(T_C) - 5, max(T_C) + 5],
         mode='lines',
@@ -177,16 +184,16 @@ def plot_txy(vle_data, col_result, z_F, P):
     fig.update_layout(
         **DARK_LAYOUT_BASE,
         xaxis=dict(
-            title=dict(text="<b>Isopropanol Mole Fraction (x, y)</b>", font=dict(size=15, color="#e2e8f0")),
+            title=dict(text=f"<b>Isopropanol composition x,y ({composition_unit})</b>", font=dict(size=15, color="#e2e8f0")),
             tickfont=dict(size=13, color="#cbd5e1"),
-            range=[0.0, 1.0],
+            range=[0.0, axis_max],
             autorange=False,
             fixedrange=False,
             constrain="domain",
             gridcolor="#334155"
         ),
         yaxis=dict(
-            title=dict(text="<b>Temperature (°C)</b>", font=dict(size=15, color="#e2e8f0")),
+            title=dict(text=f"<b>Temperature ({temperature_unit})</b>", font=dict(size=15, color="#e2e8f0")),
             tickfont=dict(size=13, color="#cbd5e1"),
             fixedrange=False,
             constrain="domain",
@@ -195,12 +202,15 @@ def plot_txy(vle_data, col_result, z_F, P):
     )
     return fig
 
-def plot_ponchon_savarit(vle_data, col_result, z_F, h_F):
+def plot_ponchon_savarit(vle_data, col_result, z_F, h_F, composition_unit="mole fraction", enthalpy_unit="kJ/mol"):
     """Generate Ponchon-Savarit (H-x-y) Diagram (side legend, x in [0, 1])."""
     fig = go.Figure()
-    xs = vle_data['x']
-    h_L = vle_data['h_L']
-    H_V = vle_data['H_V']
+    cx = lambda value: from_canonical(value, "composition", composition_unit)
+    ch = lambda value: from_canonical(value, "enthalpy", enthalpy_unit)
+    xs = [cx(v) for v in vle_data['x']]
+    h_L = [ch(v) for v in vle_data['h_L']]
+    H_V = [ch(v) for v in vle_data['H_V']]
+    axis_max = cx(1.0)
     
     fig.add_trace(go.Scatter(
         x=xs, y=h_L,
@@ -216,10 +226,11 @@ def plot_ponchon_savarit(vle_data, col_result, z_F, h_F):
         line=dict(color='#f87171', width=3)
     ))
     
-    xD = col_result['x_D']
-    Q_prime_D = col_result['Q_prime_D']
-    xB = col_result['x_B']
-    Q_prime_B = col_result['Q_prime_B']
+    xD = cx(col_result['x_D'])
+    Q_prime_D = ch(col_result['Q_prime_D'])
+    xB = cx(col_result['x_B'])
+    Q_prime_B = ch(col_result['Q_prime_B'])
+    z_F, h_F = cx(z_F), ch(h_F)
     
     fig.add_trace(go.Scatter(
         x=[xD], y=[Q_prime_D],
@@ -260,7 +271,7 @@ def plot_ponchon_savarit(vle_data, col_result, z_F, h_F):
     
     for s in col_result['stages']:
         fig.add_trace(go.Scatter(
-            x=[s['x'], s['y']], y=[s['h_L'], s['H_V']],
+            x=[cx(s['x']), cx(s['y'])], y=[ch(s['h_L']), ch(s['H_V'])],
             mode='lines+markers',
             showlegend=False,
             line=dict(color='#facc15', width=1.5),
@@ -270,7 +281,7 @@ def plot_ponchon_savarit(vle_data, col_result, z_F, h_F):
     lines = col_result.get('construction_lines', [])
     for line in lines[:15]:
         fig.add_trace(go.Scatter(
-            x=[line['x0'], line['x1']], y=[line['y0'], line['y1']],
+            x=[cx(line['x0']), cx(line['x1'])], y=[ch(line['y0']), ch(line['y1'])],
             mode='lines',
             showlegend=False,
             line=dict(color='rgba(148, 163, 184, 0.3)', width=1, dash='dot')
@@ -279,16 +290,16 @@ def plot_ponchon_savarit(vle_data, col_result, z_F, h_F):
     fig.update_layout(
         **DARK_LAYOUT_BASE,
         xaxis=dict(
-            title=dict(text="<b>Isopropanol Mole Fraction (x, y)</b>", font=dict(size=15, color="#e2e8f0")),
+            title=dict(text=f"<b>Isopropanol composition x,y ({composition_unit})</b>", font=dict(size=15, color="#e2e8f0")),
             tickfont=dict(size=13, color="#cbd5e1"),
-            range=[0.0, 1.0],
+            range=[0.0, axis_max],
             autorange=False,
             fixedrange=False,
             constrain="domain",
             gridcolor="#334155"
         ),
         yaxis=dict(
-            title=dict(text="<b>Molar Enthalpy (kJ/mol)</b>", font=dict(size=15, color="#e2e8f0")),
+            title=dict(text=f"<b>Molar enthalpy ({enthalpy_unit})</b>", font=dict(size=15, color="#e2e8f0")),
             tickfont=dict(size=13, color="#cbd5e1"),
             fixedrange=False,
             gridcolor="#334155"
@@ -296,13 +307,13 @@ def plot_ponchon_savarit(vle_data, col_result, z_F, h_F):
     )
     return fig
 
-def plot_flow_profiles(col_result):
+def plot_flow_profiles(col_result, flow_unit="mol/s"):
     """Generate Stage-by-Stage Vapor and Liquid Flow Profiles (side legend)."""
     fig = go.Figure()
     stages = col_result['stages']
     stage_nums = [s['stage'] for s in stages]
-    Ls = [s['L'] for s in stages]
-    Vs = [s['V'] for s in stages]
+    Ls = [from_canonical(s['L'], "flow", flow_unit) for s in stages]
+    Vs = [from_canonical(s['V'], "flow", flow_unit) for s in stages]
     feed_stage = col_result['feed_stage']
     
     fig.add_trace(go.Scatter(
@@ -341,7 +352,7 @@ def plot_flow_profiles(col_result):
             gridcolor="#334155"
         ),
         yaxis=dict(
-            title=dict(text="<b>Flow Rate (mol/s or kmol/h)</b>", font=dict(size=15, color="#e2e8f0")),
+            title=dict(text=f"<b>Flow rate ({flow_unit})</b>", font=dict(size=15, color="#e2e8f0")),
             tickfont=dict(size=13, color="#cbd5e1"),
             fixedrange=False,
             gridcolor="#334155"
