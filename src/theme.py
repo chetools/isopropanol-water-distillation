@@ -212,31 +212,10 @@ def app_css() -> str:
   .stPlotlyChart > div, .stPlotlyChart .js-plotly-plot, .stPlotlyChart .plot-container {{
     width: 100% !important;
   }}
-
-  /* McCabe–Thiele (widget key xy_*): keep a square frame so y = x is 45°.
-     Plotly scaleanchor is not used; it collapses after fullscreen. */
+  /* Never let a 0×0 measure (fullscreen open/close) collapse the 1:1 domain. */
   [class*="st-key-xy_"] {{
-    width: 100% !important;
-    aspect-ratio: 1 / 1 !important;
-    min-height: 0 !important;
-  }}
-  [class*="st-key-xy_"] .js-plotly-plot,
-  [class*="st-key-xy_"] .plot-container,
-  [class*="st-key-xy_"] .svg-container {{
-    width: 100% !important;
-    height: 100% !important;
-  }}
-  [data-testid="stFullScreenFrame"] [class*="st-key-xy_"] {{
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: min(100vw - 3rem, 100vh - 3rem) !important;
-    height: min(100vw - 3rem, 100vh - 3rem) !important;
-    max-width: calc(100vw - 3rem);
-    max-height: calc(100vh - 3rem);
-    aspect-ratio: 1 / 1 !important;
-    margin: 0;
+    min-width: 240px;
+    min-height: 240px;
   }}
 
   /* ---- Readable measure on very wide screens ---- */

@@ -26,10 +26,14 @@ def _convert(values, quantity, unit):
 def _layout(title, x_title, y_title, x_range=None, square=False):
     """Shared dark layout; the figure carries its own title so exports match.
 
-    Square plots (McCabe–Thiele) share one numeric range on x and y.  The
-    1:1 *pixel* aspect is enforced in CSS on the chart container, including
-    Streamlit fullscreen, not with Plotly ``scaleanchor`` — that lock is
-    what collapsed the subplot to a postage stamp after leaving fullscreen.
+    Square plots (McCabe–Thiele, both axes mole fraction) keep a 1:1 *data*
+    range and a 1:1 *pixel* scale so y = x is drawn at 45° at any window
+    size.  Streamlit fullscreen forces the figure to the whole viewport;
+    ``scaleanchor`` then pads the extra width or height.
+
+    Only the independent axis (x) is allowed to shrink its domain.  Setting
+    ``constrain: domain`` on *both* axes is what collapsed the subplot to a
+    postage stamp after leaving fullscreen.
     """
     xaxis = dict(
         title=dict(text=f"<b>{x_title}</b>", font=dict(size=15, color=theme.TEXT_MUTED)),
@@ -50,7 +54,13 @@ def _layout(title, x_title, y_title, x_range=None, square=False):
     if x_range is not None:
         xaxis.update(range=list(x_range), autorange=False)
         if square:
-            yaxis.update(range=list(x_range), autorange=False)
+            yaxis.update(
+                range=list(x_range),
+                autorange=False,
+                scaleanchor="x",
+                scaleratio=1,
+            )
+            xaxis.update(constrain="domain", constraintoward="center")
     return dict(
         template="plotly_dark",
         # Title sits below the modebar strip rather than sharing its row.
@@ -66,12 +76,10 @@ def _layout(title, x_title, y_title, x_range=None, square=False):
         font=dict(family=theme.FONT_STACK, size=13, color=theme.TEXT),
         # The bottom margin has to clear the axis title *and* the wrapped
         # horizontal legend beneath it, or the two overlap on square plots.
-        # Square charts keep tighter, more even margins so the cartesian
-        # domain stays close to 1:1 inside the CSS square container.
-        margin=dict(l=70, r=48, t=72, b=88) if square else dict(l=72, r=28, t=72, b=150),
+        margin=dict(l=72, r=28, t=72, b=150),
         legend=dict(
             orientation="h",
-            yanchor="top", y=-0.18 if square else -0.16,
+            yanchor="top", y=-0.16,
             xanchor="center", x=0.5,
             font=dict(size=12, color=theme.TEXT),
             bgcolor="rgba(0,0,0,0)",

@@ -42,23 +42,20 @@ def test_theme_rgba_round_trips_a_known_colour():
     assert theme.rgba("#38bdf8", 0.5) == "rgba(56, 189, 248, 0.5)"
 
 
-def test_square_plotly_layout_does_not_pixel_lock_the_axes():
-    """scaleanchor survives fullscreen as a postage-stamp subplot; do not use it."""
+def test_square_plotly_layout_is_one_to_one_and_pads_the_long_side():
+    """1:1 pixel scale with domain constraint only on x, so fullscreen can pad."""
     import src.plotting as plots
     layout = plots._layout("t", "x", "y", x_range=(0.0, 1.0), square=True)
     assert layout["xaxis"]["range"] == [0.0, 1.0]
     assert layout["yaxis"]["range"] == [0.0, 1.0]
-    assert layout["xaxis"].get("scaleanchor") is None
-    assert layout["yaxis"].get("scaleanchor") is None
-    assert layout["xaxis"].get("constrain") != "domain"
+    assert layout["yaxis"]["scaleanchor"] == "x"
+    assert layout["yaxis"]["scaleratio"] == 1
+    assert layout["xaxis"]["constrain"] == "domain"
+    assert layout["xaxis"]["constraintoward"] == "center"
     assert layout["yaxis"].get("constrain") != "domain"
-
-
-def test_app_css_keeps_mccabe_square_in_fullscreen():
-    css = theme.app_css()
-    assert "st-key-xy_" in css
-    assert "stFullScreenFrame" in css
-    assert "aspect-ratio: 1 / 1" in css
+    wide = plots._layout("t", "x", "y", x_range=(0.0, 1.0), square=False)
+    assert wide["yaxis"].get("scaleanchor") is None
+    assert wide["xaxis"].get("constrain") != "domain"
 
 
 def test_app_css_defines_every_class_the_ui_emits():
