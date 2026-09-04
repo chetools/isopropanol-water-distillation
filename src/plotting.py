@@ -24,27 +24,35 @@ def _convert(values, quantity, unit):
 
 
 def _layout(title, x_title, y_title, x_range=None, square=False):
-    """Shared dark layout; the figure carries its own title so exports match."""
+    """Shared dark layout; the figure carries its own title so exports match.
+
+    Square plots (McCabe–Thiele) use the same numeric range on x and y so
+    the diagram is 1:1 in *data*.  They do **not** use ``scaleanchor``:
+    Plotly pins that constraint in pixel space, and after Streamlit chart
+    fullscreen closes the cartesian domain collapses to a postage stamp
+    inside a full-size frame.  Equal ranges without a pixel lock survive
+    the resize.
+    """
     xaxis = dict(
         title=dict(text=f"<b>{x_title}</b>", font=dict(size=15, color=theme.TEXT_MUTED)),
         tickfont=dict(size=13, color=theme.TEXT_MUTED),
         gridcolor=theme.GRID,
         zerolinecolor=theme.BORDER_STRONG,
-        constrain="domain",
         fixedrange=False,
+        automargin=True,
     )
     yaxis = dict(
         title=dict(text=f"<b>{y_title}</b>", font=dict(size=15, color=theme.TEXT_MUTED)),
         tickfont=dict(size=13, color=theme.TEXT_MUTED),
         gridcolor=theme.GRID,
         zerolinecolor=theme.BORDER_STRONG,
-        constrain="domain",
         fixedrange=False,
+        automargin=True,
     )
     if x_range is not None:
         xaxis.update(range=list(x_range), autorange=False)
-    if square:
-        yaxis.update(range=list(x_range), autorange=False, scaleanchor="x", scaleratio=1)
+        if square:
+            yaxis.update(range=list(x_range), autorange=False)
     return dict(
         template="plotly_dark",
         # Title sits below the modebar strip rather than sharing its row.
@@ -118,9 +126,13 @@ def plot_xy(vle_data, col_result, z_F, composition_unit="mole fraction"):
     stair_x = mccabe.get('staircase_x', [])
     if len(stair_x) > 0:
         count = mccabe.get('stage_count', col_result['total_stages'])
+        if mccabe.get('pinched'):
+            stair_name = f"CMO staircase (pinched after {count} stages)"
+        else:
+            stair_name = f"CMO staircase ({count} stages)"
         fig.add_trace(go.Scatter(
             x=convert(stair_x), y=convert(mccabe['staircase_y']), mode='lines',
-            name=f"CMO staircase ({count} stages)",
+            name=stair_name,
             line=dict(color=theme.DANGER, width=2.5),
         ))
 
@@ -303,13 +315,23 @@ def plot_flow_profiles(col_result, flow_unit="mol/s"):
         line=dict(color=theme.VAPOR, width=3), marker=dict(size=9),
         hovertemplate="stage %{x}<br>V=%{y:.4g}<extra></extra>",
     ))
+    used_feed = col_result['feed_stage']
     fig.add_vline(
-        x=col_result['feed_stage'], line_width=2, line_dash="dash",
+        x=used_feed, line_width=2, line_dash="dash",
         line_color=theme.FEED,
-        annotation_text=f"Feed stage ({col_result['feed_stage']})",
+        annotation_text=f"Feed stage ({used_feed})",
         annotation_position="top right",
         annotation_font=dict(size=13, color=theme.FEED),
     )
+    optimal_feed = col_result.get('optimal_feed_stage', used_feed)
+    if optimal_feed != used_feed:
+        fig.add_vline(
+            x=optimal_feed, line_width=1.5, line_dash="dot",
+            line_color=theme.FEED,
+            annotation_text=f"Optimal ({optimal_feed})",
+            annotation_position="top left",
+            annotation_font=dict(size=12, color=theme.FEED),
+        )
 
     layout = _layout(
         "Internal flows (non-CMO)",

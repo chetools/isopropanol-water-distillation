@@ -208,7 +208,10 @@ def app_css() -> str:
   }}
 
   /* ---- Charts fill their column ---- */
-  .stPlotlyChart {{ margin-left: auto; margin-right: auto; }}
+  .stPlotlyChart {{ margin-left: auto; margin-right: auto; width: 100% !important; }}
+  .stPlotlyChart > div, .stPlotlyChart .js-plotly-plot, .stPlotlyChart .plot-container {{
+    width: 100% !important;
+  }}
 
   /* ---- Readable measure on very wide screens ---- */
   .main .block-container,

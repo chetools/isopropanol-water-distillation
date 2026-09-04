@@ -65,6 +65,32 @@ def test_ponchon_operating_rays_reach_equilibrium_vapor_curve():
         assert ray['y2'] == pytest.approx(th.h_vapor_mix(ray['x2'], T_dew), abs=1e-8)
 
 
+def test_vapour_feed_tilts_the_q_line_and_changes_the_column():
+    """q is a solver input: saturated vapour must not reuse a liquid-feed column."""
+    F, z_F, P = 100.0, 0.20, 101325.0
+    liquid = th.calculate_feed_state(z_F, P, q=1.0)
+    vapour = th.calculate_feed_state(z_F, P, q=0.0)
+    r_L = col.solve_design_column(F, z_F, P, 0.60, 0.02, 3.0, liquid)
+    r_V = col.solve_design_column(F, z_F, P, 0.60, 0.02, 3.0, vapour)
+    q_L = r_L["mccabe_lines"]
+    q_V = r_V["mccabe_lines"]
+    assert q_L["q_line_x"][0] == pytest.approx(q_L["q_line_x"][1])  # vertical
+    assert q_V["q_line_y"][0] == pytest.approx(q_V["q_line_y"][1])  # horizontal
+    assert r_V["h_F"] != pytest.approx(r_L["h_F"])
+    assert r_V["Q_prime_B"] != pytest.approx(r_L["Q_prime_B"])
+
+
+def test_mccabe_reports_a_pinch_instead_of_running_to_the_loop_cap():
+    """R below the CMO R_min must not draw 100 dummy stages."""
+    F, z_F, P = 100.0, 0.20, 101325.0
+    feed = th.calculate_feed_state(z_F, P, q=0.0)
+    D = F * (z_F - 0.02) / (0.60 - 0.02)
+    result = col.solve_rating_column(F, z_F, P, feed, 13, 5, 1.5, D)
+    m = result["mccabe_lines"]
+    assert m["pinched"]
+    assert m["stage_count"] < 100
+
+
 def test_mccabe_staircase_alternates_equilibrium_and_operating_steps():
     """Horizontal endpoints are equilibrated; vertical endpoints lie on an operating line."""
     P = 101325.0
@@ -205,6 +231,40 @@ def test_rating_feasible_window_respects_the_component_balance():
         assert 0.0 < x_B < z_F, f"x_D={x_D} gives x_B={x_B}"
 
 
+def test_specified_feed_stage_is_used_and_costs_stages():
+    """Locking N_F must move the switch and must not silently use the crossing."""
+    F, z_F, P = 100.0, 0.20, 101325.0
+    feed = th.calculate_feed_state(z_F, P, q=1.0)
+    optimal = col.solve_design_column(F, z_F, P, 0.60, 0.02, 3.0, feed)
+    assert optimal["feed_stage"] != 1
+    assert optimal["feed_stage_spec"] is None
+    assert optimal["optimal_feed_stage"] == optimal["feed_stage"]
+    assert optimal["stages"][0]["section"] == "Rectifying"
+
+    at_crossing = col.solve_design_column(
+        F, z_F, P, 0.60, 0.02, 3.0, feed,
+        feed_stage_spec=optimal["feed_stage"],
+    )
+    assert at_crossing["feed_stage"] == optimal["feed_stage"]
+    assert at_crossing["total_stages"] == optimal["total_stages"]
+
+    early = col.solve_design_column(
+        F, z_F, P, 0.60, 0.02, 3.0, feed, feed_stage_spec=1,
+    )
+    assert early["feed_stage"] == 1
+    assert early["feed_stage_spec"] == 1
+    assert early["optimal_feed_stage"] == optimal["feed_stage"]
+    assert early["stages"][0]["section"] == "Stripping"
+
+    late_n = optimal["feed_stage"] + 1
+    late = col.solve_design_column(
+        F, z_F, P, 0.60, 0.02, 3.0, feed, feed_stage_spec=late_n,
+    )
+    assert late["feed_stage"] == late_n
+    late_sections = [s["section"] for s in late["stages"]]
+    assert late_sections[:late_n - 1] == ["Rectifying"] * (late_n - 1)
+
+
 def test_lowering_stage_count_below_the_feed_stage_does_not_crash():
     """Regression: reducing N below a retained feed stage must not raise.
 
@@ -219,17 +279,18 @@ def test_lowering_stage_count_below_the_feed_stage_does_not_crash():
     at.run(timeout=120)
     assert not at.exception, [e.message for e in at.exception]
 
-    # Switch to Rating mode.
     at.radio[0].set_value("Rating (fixed stages)").run(timeout=120)
     assert not at.exception, [e.message for e in at.exception]
 
+    at.radio[1].set_value("Specified tray").run(timeout=120)
+    assert not at.exception, [e.message for e in at.exception]
+
     at.session_state["rating_stages"] = 10
-    at.session_state["rating_feed_stage"] = 5
+    at.session_state["specified_feed_stage"] = 5
     at.run(timeout=120)
     assert not at.exception, [e.message for e in at.exception]
 
-    # Now drop the stage count below the retained feed stage.
     at.session_state["rating_stages"] = 4
     at.run(timeout=120)
     assert not at.exception, [e.message for e in at.exception]
-    assert at.session_state["rating_feed_stage"] <= 4
+    assert at.session_state["specified_feed_stage"] <= 4

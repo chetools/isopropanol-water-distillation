@@ -77,9 +77,23 @@ def _bubble_state(x, P, approx):
     return T, float(th.h_liquid_mix(x, T))
 
 
+def _should_switch_to_stripping(section, n, x_n, z_F, feed_stage_spec):
+    """Whether stage ``n`` is the first stripping (feed) stage.
+
+    ``feed_stage_spec is None`` is the textbook construction: switch where the
+    liquid composition crosses the feed line.  An integer locks the switch at
+    that tray, which is the existing-nozzle (off-optimal) case.
+    """
+    if section != 'Rectifying':
+        return False
+    if feed_stage_spec is None:
+        return x_n <= z_F or (n >= 2 and x_n < (z_F + 0.02))
+    return n == int(feed_stage_spec)
+
+
 def _ponchon_stage_loop(
     z_F, x_D, x_B, D, B, Q_prime_D, Q_prime_B, V_top, L_reflux,
-    murphree_eff, P, approx_vle, record_construction,
+    murphree_eff, P, approx_vle, record_construction, feed_stage_spec=None,
 ):
     """Stage-to-stage Ponchon–Savarit recurrence.
 
@@ -92,7 +106,7 @@ def _ponchon_stage_loop(
     y_curr = x_D
     x_prev = x_D
     section = 'Rectifying'
-    feed_stage = 1
+    feed_stage = int(feed_stage_spec) if feed_stage_spec is not None else 1
 
     for n in range(1, 101):
         T_dew_n, x_eq, H_Vn = _dew_state(y_curr, P, approx_vle)
@@ -102,7 +116,7 @@ def _ponchon_stage_loop(
 
         _T_bubble_n, h_Ln = _bubble_state(x_n, P, approx_vle)
 
-        if section == 'Rectifying' and (x_n <= z_F or (n >= 2 and x_n < (z_F + 0.02))):
+        if _should_switch_to_stripping(section, n, x_n, z_F, feed_stage_spec):
             section = 'Stripping'
             feed_stage = n
 
@@ -190,7 +204,8 @@ def _ponchon_stage_loop(
 
 
 def solve_design_column(F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT=0.0,
-                        murphree_eff=1.0, *, diagnostics=True, approx_vle=False):
+                        murphree_eff=1.0, *, diagnostics=True, approx_vle=False,
+                        feed_stage_spec=None):
     h_F = feed_state['h_F']
     q_feed = feed_state.get('q', 1.0)
 
@@ -225,6 +240,7 @@ def solve_design_column(F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT=0.0,
     stages, construction_lines, feed_stage = _ponchon_stage_loop(
         z_F, x_D, x_B, D, B, Q_prime_D, Q_prime_B, V_top, L_reflux,
         murphree_eff, P, approx_vle, record_construction=diagnostics,
+        feed_stage_spec=feed_stage_spec,
     )
 
     total_stages = len(stages)
@@ -240,6 +256,7 @@ def solve_design_column(F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT=0.0,
         'staircase_x': [x_D],
         'staircase_y': [x_D],
         'stage_count': 0,
+        'pinched': False,
     }
 
     if diagnostics:
@@ -271,6 +288,8 @@ def solve_design_column(F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT=0.0,
         b_S = x_B * (1.0 - m_S)
         y_step = x_D
         mccabe_stage_count = 0
+        pinched = False
+        prev_x_eq = x_D
         for _ in range(100):
             _, x_eq = th.dew_point(y_step, P)
             x_eq = float(np.clip(x_eq, 0.0, 1.0))
@@ -279,7 +298,17 @@ def solve_design_column(F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT=0.0,
             mccabe_stage_count += 1
             if x_eq <= x_B:
                 break
-            if x_eq >= x_I:
+            # CMO pinches when a step no longer moves toward x_B — typically
+            # R < R_min.  Do not keep drawing dummy stages up to the loop cap.
+            if mccabe_stage_count > 1 and x_eq >= prev_x_eq - 1e-10:
+                pinched = True
+                break
+            prev_x_eq = x_eq
+            if feed_stage_spec is None:
+                on_rectifying = x_eq >= x_I
+            else:
+                on_rectifying = mccabe_stage_count < int(feed_stage_spec)
+            if on_rectifying:
                 y_next = m_R * x_eq + b_R
             else:
                 y_next = m_S * x_eq + b_S
@@ -287,6 +316,9 @@ def solve_design_column(F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT=0.0,
             staircase_x.append(x_eq)
             staircase_y.append(y_next)  # vertical: component-balance operating line
             if y_next <= x_B:
+                break
+            if y_next >= y_step - 1e-12:
+                pinched = True
                 break
             y_step = y_next
 
@@ -300,7 +332,19 @@ def solve_design_column(F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT=0.0,
             'staircase_x': staircase_x,
             'staircase_y': staircase_y,
             'stage_count': mccabe_stage_count,
+            'pinched': pinched,
         }
+
+    if feed_stage_spec is None:
+        optimal_feed_stage = int(feed_stage)
+    elif diagnostics:
+        crossing = solve_design_column(
+            F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT, murphree_eff,
+            diagnostics=False, approx_vle=True, feed_stage_spec=None,
+        )
+        optimal_feed_stage = int(crossing["feed_stage"])
+    else:
+        optimal_feed_stage = int(feed_stage)
 
     return {
         'F': float(F),
@@ -316,6 +360,8 @@ def solve_design_column(F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT=0.0,
         'total_stages': int(total_stages),
         'tray_count': int(tray_count),
         'feed_stage': int(feed_stage),
+        'feed_stage_spec': None if feed_stage_spec is None else int(feed_stage_spec),
+        'optimal_feed_stage': int(optimal_feed_stage),
         'Q_C': float(QC),
         'Q_R': float(QR),
         'Q_prime_D': float(Q_prime_D),
@@ -366,7 +412,7 @@ def rating_feasible_window(F, z_F, P, D):
 
 
 def solve_rating_column(F, z_F, P, feed_state, N_stages, N_feed, R, D_spec,
-                        subcooling_dT=0.0, murphree_eff=1.0):
+                        subcooling_dT=0.0, murphree_eff=1.0, feed_stage_spec=None):
     """Fixed-hardware case: find the split a column of ``N_stages`` delivers.
 
     With the feed and the distillate rate fixed, the component balance leaves a
@@ -395,6 +441,7 @@ def solve_rating_column(F, z_F, P, feed_state, N_stages, N_feed, R, D_spec,
             return solve_design_column(
                 F, z_F, P, x_D, x_B, R, feed_state, subcooling_dT, murphree_eff,
                 diagnostics=full, approx_vle=not full,
+                feed_stage_spec=feed_stage_spec,
             )
         except Exception:
             return None
@@ -450,9 +497,11 @@ def solve_rating_column(F, z_F, P, feed_state, N_stages, N_feed, R, D_spec,
             F, z_F, P, fallback_x,
             max(0.01, (F * z_F - D * fallback_x) / (F - D)),
             R, feed_state, subcooling_dT, murphree_eff,
+            feed_stage_spec=feed_stage_spec,
         )
         fallback["rating"] = {
-            "requested_stages": int(N_stages), "requested_feed_stage": int(N_feed),
+            "requested_stages": int(N_stages),
+            "requested_feed_stage": None if feed_stage_spec is None else int(N_feed),
             "achievable_stages": None, "stages_met": False, "feed_stage_met": False,
             "message": ("No feasible split exists at this distillate rate: the "
                         "component balance drives the bottoms composition out of "
@@ -510,12 +559,20 @@ def solve_rating_column(F, z_F, P, feed_state, N_stages, N_feed, R, D_spec,
                 f"{presented['total_stages']}."
             )
 
+    if feed_stage_spec is None:
+        feed_stage_met = True
+    else:
+        feed_stage_met = (
+            presented["feed_stage"] == int(feed_stage_spec)
+            and presented["total_stages"] >= int(feed_stage_spec)
+        )
+
     presented["rating"] = {
         "requested_stages": int(N_stages),
-        "requested_feed_stage": int(N_feed),
+        "requested_feed_stage": None if feed_stage_spec is None else int(feed_stage_spec),
         "achievable_stages": reachable,
         "stages_met": stages_met,
-        "feed_stage_met": presented["feed_stage"] == int(N_feed),
+        "feed_stage_met": feed_stage_met,
         "message": message,
     }
     return presented

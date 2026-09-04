@@ -42,6 +42,18 @@ def test_theme_rgba_round_trips_a_known_colour():
     assert theme.rgba("#38bdf8", 0.5) == "rgba(56, 189, 248, 0.5)"
 
 
+def test_square_plotly_layout_does_not_pixel_lock_the_axes():
+    """scaleanchor survives fullscreen as a postage-stamp subplot; do not use it."""
+    import src.plotting as plots
+    layout = plots._layout("t", "x", "y", x_range=(0.0, 1.0), square=True)
+    assert layout["xaxis"]["range"] == [0.0, 1.0]
+    assert layout["yaxis"]["range"] == [0.0, 1.0]
+    assert layout["xaxis"].get("scaleanchor") is None
+    assert layout["yaxis"].get("scaleanchor") is None
+    assert layout["xaxis"].get("constrain") != "domain"
+    assert layout["yaxis"].get("constrain") != "domain"
+
+
 def test_app_css_defines_every_class_the_ui_emits():
     css = theme.app_css()
     for klass in ("metric-card", "metric-title", "metric-value", "metric-sub",

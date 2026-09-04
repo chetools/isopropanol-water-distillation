@@ -9,6 +9,7 @@ visible while the reader moves between design, diagrams, sizing, audit and
 the tutorial.
 """
 
+import hashlib
 import importlib
 import sys
 
@@ -86,7 +87,12 @@ st.set_page_config(
 st.markdown(theme.app_css(), unsafe_allow_html=True)
 ui.init_units()
 
-PLOTLY_CONFIG = {"scrollZoom": True, "displayModeBar": True, "displaylogo": False}
+PLOTLY_CONFIG = {
+    "scrollZoom": True,
+    "displayModeBar": True,
+    "displaylogo": False,
+    "responsive": True,
+}
 
 #: Which quantity each locked specification is measured in.
 SPEC_QUANTITY = {
@@ -107,7 +113,7 @@ def _cached_column_solve(
     F: float,
     z_F: float,
     P: float,
-    feed_items: tuple,
+    q: float,
     x_D: float,
     x_B: float,
     R: float,
@@ -116,15 +122,22 @@ def _cached_column_solve(
     N_feed: int,
     subcooling_dT: float,
     murphree_eff: float,
+    feed_stage_spec: int,
 ) -> dict:
-    """Physics-only cache: display-unit changes must not re-solve the column."""
-    feed = dict(feed_items)
+    """Physics-only cache. Every solver input is a primitive so a change in
+    q, N, reflux, feed stage, etc. cannot reuse a previous column.
+    Display-unit changes do not appear here and so do not re-solve.
+    """
+    feed = th.calculate_feed_state(z_F, P, q=q)
+    locked_feed = None if feed_stage_spec <= 0 else feed_stage_spec
     if mode_is_rating:
         return col.solve_rating_column(
             F, z_F, P, feed, N_spec, N_feed, R, D, subcooling_dT, murphree_eff,
+            feed_stage_spec=locked_feed,
         )
     return col.solve_design_column(
         F, z_F, P, x_D, x_B, R, feed, subcooling_dT, murphree_eff,
+        feed_stage_spec=locked_feed,
     )
 
 
@@ -224,8 +237,18 @@ with st.sidebar:
              "on a real tray.",
     )
 
+    feed_placement = st.radio(
+        "Feed location",
+        ["Optimal (feed-line crossing)", "Specified tray"],
+        help="Optimal switches from the rectifying to the stripping difference "
+             "point where the construction crosses the feed composition — the "
+             "nozzle that minimises stages for this split (tutorial §5D). "
+             "Specified locks the switch at a tray, as in an existing column.",
+    )
+
     N_spec = 0
     N_feed_spec = 0
+    feed_stage_spec = None
     if "Rating" in mode:
         st.subheader("Rating specification")
         st.session_state.setdefault("rating_stages", 10)
@@ -234,18 +257,25 @@ with st.sidebar:
             key="rating_stages",
             help="Equilibrium stages including the partial reboiler.",
         ))
+
+    if "Specified" in feed_placement:
+        n_feed_max = N_spec if "Rating" in mode else 50
         # The feed stage cannot exceed the stage count, and Streamlit retains a
         # widget's previous value across reruns.  Lowering N below the retained
         # feed stage therefore raises StreamlitValueAboveMaxError unless the
         # stored value is clamped *before* the widget is rendered.
-        st.session_state.rating_feed_stage = min(
-            int(st.session_state.get("rating_feed_stage", 5)), N_spec
+        st.session_state.setdefault("specified_feed_stage", 5)
+        st.session_state.specified_feed_stage = min(
+            max(1, int(st.session_state.get("specified_feed_stage", 5))),
+            n_feed_max,
         )
-        N_feed_spec = int(st.number_input(
-            "Feed stage from top", min_value=1, max_value=N_spec, step=1,
-            key="rating_feed_stage",
-            help="Where the feed enters, counted from the top.",
+        feed_stage_spec = int(st.number_input(
+            "Feed stage from top", min_value=1, max_value=n_feed_max, step=1,
+            key="specified_feed_stage",
+            help="First stripping stage, counted from the top. "
+                 "The total condenser is not a stage.",
         ))
+        N_feed_spec = feed_stage_spec
 
 
 # ---------------------------------------------------------------------------
@@ -371,14 +401,33 @@ x_D, x_B = dof.values["x_D"], dof.values["x_B"]
 R, D = dof.values["R"], dof.values["D"]
 
 vle_data = _cached_vle_curves(float(P), 240)
-feed_items = tuple(sorted((key, float(value)) for key, value in feed_state.items()))
 result = _cached_column_solve(
     "Rating" in mode,
-    float(F), float(z_F), float(P), feed_items,
+    float(F), float(z_F), float(P), float(q_value),
     float(x_D), float(x_B), float(R), float(D),
     int(N_spec), int(N_feed_spec),
     float(subcooling_dT), float(murphree_eff),
+    0 if feed_stage_spec is None else int(feed_stage_spec),
 )
+
+
+def _figure_key(name: str) -> str:
+    """Remount Plotly figures when any physics input changes.
+
+    Streamlit can keep a previous Plotly trace set if the chart widget is
+    identified only by position.  Hashing the solver arguments into the
+    widget key forces a redraw when q, N, R, feed stage, etc. change.
+    """
+    payload = (
+        name, mode, float(F), float(z_F), float(P), float(q_value),
+        float(x_D), float(x_B), float(R), float(D),
+        int(N_spec), int(N_feed_spec), float(subcooling_dT),
+        float(murphree_eff),
+        0 if feed_stage_spec is None else int(feed_stage_spec),
+        int(result["total_stages"]), int(result["feed_stage"]),
+    )
+    digest = hashlib.sha1(repr(payload).encode("utf-8")).hexdigest()[:16]
+    return f"{name}_{digest}"
 
 
 # ---------------------------------------------------------------------------
@@ -388,7 +437,15 @@ result = _cached_column_solve(
 kpis = st.columns(6)
 ui.kpi_card(kpis[0], "Total stages", f"{result['total_stages']}", "",
             f"{result['tray_count']} trays + partial reboiler")
-ui.kpi_card(kpis[1], "Feed stage", f"{result['feed_stage']}", "", "counted from top")
+_used_feed = result["feed_stage"]
+_opt_feed = result.get("optimal_feed_stage", _used_feed)
+if result.get("feed_stage_spec") is None:
+    _feed_sub = "feed-line crossing (tutorial §5D)"
+elif _used_feed == _opt_feed:
+    _feed_sub = "specified, and it is the crossing"
+else:
+    _feed_sub = f"specified · crossing would be {_opt_feed}"
+ui.kpi_card(kpis[1], "Feed stage", f"{_used_feed}", "", _feed_sub)
 ui.kpi_card(kpis[2], "Min reflux R_min", f"{result['R_min']:.3g}", "mol/mol",
             f"R/R_min = {R / max(0.01, result['R_min']):.3g}")
 ui.kpi_card(kpis[3], "Min stages N_min", f"{result['N_min']}", "",
@@ -411,13 +468,23 @@ if rating and rating["message"]:
         f"{rating['requested_stages']} stages; this column delivers "
         f"{result['total_stages']}. {rating['message']}"
     )
-elif rating and not rating["feed_stage_met"]:
+elif rating and rating.get("requested_feed_stage") is not None and not rating["feed_stage_met"]:
+    st.warning(
+        f"Specified feed stage {rating['requested_feed_stage']} is below the "
+        f"last stage of this column ({result['total_stages']}). The construction "
+        f"never switches to stripping."
+    )
+elif (
+    result.get("feed_stage_spec") is not None
+    and result["feed_stage"] != result.get("optimal_feed_stage", result["feed_stage"])
+):
+    _off = result["feed_stage"] - result["optimal_feed_stage"]
+    _side = "below" if _off > 0 else "above"
     st.info(
-        f"Stage count matched ({result['total_stages']}). The feed stage is "
-        f"placed at {result['feed_stage']} rather than the requested "
-        f"{rating['requested_feed_stage']}: the solver puts the feed where the "
-        f"construction crosses the feed line, which is the optimal location for "
-        f"this split (tutorial §5D)."
+        f"Feed is on stage {result['feed_stage']}, {_side} the feed-line "
+        f"crossing at stage {result['optimal_feed_stage']}. Off-optimal feed "
+        f"uses the wrong difference point on some stages, so the split is worse "
+        f"than the same reflux at the crossing (tutorial §5D)."
     )
 
 
@@ -477,29 +544,36 @@ with tab_diagrams:
         "Distillation visualisation dashboard",
         "Axis units follow the display-units panel in the sidebar.",
     )
+    if result.get("mccabe_lines", {}).get("pinched"):
+        st.info(
+            "The McCabe–Thiele (CMO) staircase pinches before it reaches $x_B$. "
+            "That is the constant-molal-overflow construction at this $R$ and split; "
+            f"$R/R_{{\\min}}$ = {R / max(0.01, result['R_min']):.3g}. "
+            "Ponchon–Savarit still closes because it does not assume CMO."
+        )
     row1 = st.columns(2)
     with row1[0]:
         st.plotly_chart(
             plots.plot_xy(vle_data, result, z_F, ui.unit_for("composition")),
-            width="stretch", config=PLOTLY_CONFIG,
+            width="stretch", config=PLOTLY_CONFIG, key=_figure_key("xy"),
         )
     with row1[1]:
         st.plotly_chart(
             plots.plot_txy(vle_data, result, z_F, P,
                            ui.unit_for("composition"), ui.unit_for("temperature")),
-            width="stretch", config=PLOTLY_CONFIG,
+            width="stretch", config=PLOTLY_CONFIG, key=_figure_key("txy"),
         )
     row2 = st.columns(2)
     with row2[0]:
         st.plotly_chart(
             plots.plot_ponchon_savarit(vle_data, result, z_F, feed_state["h_F"],
                                        ui.unit_for("composition"), ui.unit_for("enthalpy")),
-            width="stretch", config=PLOTLY_CONFIG,
+            width="stretch", config=PLOTLY_CONFIG, key=_figure_key("ponchon"),
         )
     with row2[1]:
         st.plotly_chart(
             plots.plot_flow_profiles(result, ui.unit_for("flow")),
-            width="stretch", config=PLOTLY_CONFIG,
+            width="stretch", config=PLOTLY_CONFIG, key=_figure_key("flows"),
         )
 
 
