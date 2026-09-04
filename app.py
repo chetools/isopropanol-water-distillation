@@ -86,6 +86,7 @@ st.set_page_config(
 )
 st.markdown(theme.app_css(), unsafe_allow_html=True)
 ui.init_units()
+ui.inject_square_xy_guard()
 
 PLOTLY_CONFIG = {
     "scrollZoom": True,

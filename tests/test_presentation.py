@@ -42,20 +42,25 @@ def test_theme_rgba_round_trips_a_known_colour():
     assert theme.rgba("#38bdf8", 0.5) == "rgba(56, 189, 248, 0.5)"
 
 
-def test_square_plotly_layout_is_one_to_one_and_pads_the_long_side():
-    """1:1 pixel scale with domain constraint only on x, so fullscreen can pad."""
+def test_square_plotly_layout_marks_aspect_and_does_not_use_scaleanchor():
+    """scaleanchor plus Streamlit fullscreen revert is the postage-stamp bug."""
     import src.plotting as plots
     layout = plots._layout("t", "x", "y", x_range=(0.0, 1.0), square=True)
     assert layout["xaxis"]["range"] == [0.0, 1.0]
     assert layout["yaxis"]["range"] == [0.0, 1.0]
-    assert layout["yaxis"]["scaleanchor"] == "x"
-    assert layout["yaxis"]["scaleratio"] == 1
-    assert layout["xaxis"]["constrain"] == "domain"
-    assert layout["xaxis"]["constraintoward"] == "center"
-    assert layout["yaxis"].get("constrain") != "domain"
+    assert layout["meta"]["aspect"] == "1:1"
+    assert layout["yaxis"].get("scaleanchor") is None
+    assert layout["xaxis"].get("constrain") != "domain"
     wide = plots._layout("t", "x", "y", x_range=(0.0, 1.0), square=False)
-    assert wide["yaxis"].get("scaleanchor") is None
-    assert wide["xaxis"].get("constrain") != "domain"
+    assert "meta" not in wide
+
+
+def test_square_xy_guard_pads_fullscreen_and_restores_on_revert():
+    import src.ui as ui
+    js = ui._SQUARE_XY_GUARD
+    assert "stFullScreenFrame" in js
+    assert "Plotly.relayout" in js
+    assert 'aspect === "1:1"' in js
 
 
 def test_app_css_defines_every_class_the_ui_emits():

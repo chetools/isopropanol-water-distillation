@@ -26,14 +26,12 @@ def _convert(values, quantity, unit):
 def _layout(title, x_title, y_title, x_range=None, square=False):
     """Shared dark layout; the figure carries its own title so exports match.
 
-    Square plots (McCabe–Thiele, both axes mole fraction) keep a 1:1 *data*
-    range and a 1:1 *pixel* scale so y = x is drawn at 45° at any window
-    size.  Streamlit fullscreen forces the figure to the whole viewport;
-    ``scaleanchor`` then pads the extra width or height.
-
-    Only the independent axis (x) is allowed to shrink its domain.  Setting
-    ``constrain: domain`` on *both* axes is what collapsed the subplot to a
-    postage stamp after leaving fullscreen.
+    Square plots (McCabe–Thiele) share one numeric range on x and y.  Pixel
+    1:1 is applied in the browser by :func:`src.ui.inject_square_xy_guard`
+    after Streamlit sizes the figure.  Plotly ``scaleanchor`` is not used:
+    Streamlit fullscreen writes the viewport into ``layout.width/height``,
+    and on revert that stale height plus scaleanchor produced the tall
+    postage-stamp subplot (y-axis drifting to -0.5 .. 1.5).
     """
     xaxis = dict(
         title=dict(text=f"<b>{x_title}</b>", font=dict(size=15, color=theme.TEXT_MUTED)),
@@ -54,14 +52,8 @@ def _layout(title, x_title, y_title, x_range=None, square=False):
     if x_range is not None:
         xaxis.update(range=list(x_range), autorange=False)
         if square:
-            yaxis.update(
-                range=list(x_range),
-                autorange=False,
-                scaleanchor="x",
-                scaleratio=1,
-            )
-            xaxis.update(constrain="domain", constraintoward="center")
-    return dict(
+            yaxis.update(range=list(x_range), autorange=False)
+    layout = dict(
         template="plotly_dark",
         # Title sits below the modebar strip rather than sharing its row.
         title=dict(
@@ -89,6 +81,9 @@ def _layout(title, x_title, y_title, x_range=None, square=False):
         xaxis=xaxis,
         yaxis=yaxis,
     )
+    if square:
+        layout["meta"] = {"aspect": "1:1"}
+    return layout
 
 
 # ---------------------------------------------------------------------------

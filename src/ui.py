@@ -108,8 +108,150 @@ def kpi_card(container, title: str, value: str, unit: str = "", sub: str = "") -
     )
 
 
+_SQUARE_XY_GUARD = """
+<!-- square-xy-guard -->
+<script>
+(function () {
+  if (window.__ipaSquareXyGuard) {
+    return;
+  }
+  window.__ipaSquareXyGuard = true;
+  var last = new WeakMap();
+
+  function plotlyApi() {
+    return window.Plotly;
+  }
+
+  function isSquareChart(gd) {
+    var meta = gd.layout && gd.layout.meta;
+    if (meta && meta.aspect === "1:1") {
+      return true;
+    }
+    var title = gd.layout && gd.layout.title && gd.layout.title.text;
+    return typeof title === "string" && title.indexOf("McCabe-Thiele") !== -1;
+  }
+
+  function isFullscreen(gd) {
+    var frame = gd.closest('[data-testid="stFullScreenFrame"]');
+    if (!frame) {
+      return false;
+    }
+    return window.getComputedStyle(frame).position === "fixed";
+  }
+
+  function rangesOf(gd) {
+    var xr = gd.layout.xaxis && gd.layout.xaxis.range;
+    var yr = gd.layout.yaxis && gd.layout.yaxis.range;
+    return {
+      x: xr ? xr.slice() : [0, 1],
+      y: yr ? yr.slice() : [0, 1],
+    };
+  }
+
+  function apply(gd) {
+    var Plotly = plotlyApi();
+    if (!Plotly || !gd || !gd.layout || !isSquareChart(gd)) {
+      return;
+    }
+    var fullscreen = isFullscreen(gd);
+    var host = fullscreen
+      ? gd.closest('[data-testid="stFullScreenFrame"]')
+      : (gd.parentElement || gd);
+    var w = host.clientWidth;
+    var h = host.clientHeight;
+    if (w < 80 || h < 80) {
+      return;
+    }
+    var ranges = rangesOf(gd);
+    var token = (fullscreen ? "F" : "N") + ":" + w + "x" + h;
+    if (last.get(gd) === token) {
+      return;
+    }
+    last.set(gd, token);
+    if (fullscreen) {
+      var innerW = w - 120;
+      var innerH = h - 220;
+      if (innerW < 40 || innerH < 40) {
+        return;
+      }
+      var xdom = [0, 1];
+      var ydom = [0, 1];
+      if (innerW > innerH) {
+        var fx = innerH / innerW;
+        var gx = (1 - fx) / 2;
+        xdom = [gx, 1 - gx];
+      } else if (innerH > innerW) {
+        var fy = innerW / innerH;
+        var gy = (1 - fy) / 2;
+        ydom = [gy, 1 - gy];
+      }
+      Plotly.relayout(gd, {
+        "xaxis.domain": xdom,
+        "yaxis.domain": ydom,
+        "xaxis.range": ranges.x,
+        "yaxis.range": ranges.y,
+        "xaxis.autorange": false,
+        "yaxis.autorange": false,
+      });
+      return;
+    }
+    var side = Math.max(240, w);
+    Plotly.relayout(gd, {
+      width: side,
+      height: side,
+      "xaxis.domain": [0, 1],
+      "yaxis.domain": [0, 1],
+      "xaxis.range": ranges.x,
+      "yaxis.range": ranges.y,
+      "xaxis.autorange": false,
+      "yaxis.autorange": false,
+    });
+  }
+
+  function all() {
+    document.querySelectorAll(".js-plotly-plot").forEach(apply);
+  }
+
+  var timer = null;
+  function schedule() {
+    if (timer !== null) {
+      window.clearTimeout(timer);
+    }
+    timer = window.setTimeout(all, 50);
+  }
+
+  var ro = new ResizeObserver(schedule);
+  function watch() {
+    document.querySelectorAll(
+      ".js-plotly-plot, [data-testid='stFullScreenFrame']"
+    ).forEach(function (el) {
+      ro.observe(el);
+    });
+    schedule();
+  }
+  new MutationObserver(watch).observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
+  window.addEventListener("resize", schedule);
+  watch();
+})();
+</script>
+"""
+
+
+def inject_square_xy_guard() -> None:
+    """Keep mole-fraction x-y charts 1:1 after Streamlit sizes them.
+
+    Streamlit fullscreen writes the viewport into Plotly ``layout.width``
+    and ``layout.height``.  This guard pads the long side while fullscreen,
+    then restores a square figure (and the 0–1 ranges) on revert so the
+    subplot cannot collapse to a postage stamp.
+    """
+    st.html(_SQUARE_XY_GUARD, unsafe_allow_javascript=True)
+
+
 def section(title: str, caption: str = "") -> None:
-    """A consistent section heading."""
     st.markdown(
         f'<div style="font-size:{theme.FONT_SECTION}px;font-weight:700;'
         f'color:{theme.TEXT};margin:0.2rem 0 0.1rem 0;">{title}</div>',
