@@ -15,7 +15,7 @@ import src.dof_manager as dof_mod
 from src.tutorial import render_tutorial
 from src.sizing_dashboard import render_sizing_dashboard
 from src.process_audit import render_process_calculation_audit
-from src.units import display_step, from_canonical, to_canonical, unit_options
+from src.units import from_canonical, to_canonical, unit_options
 
 importlib.reload(th)
 importlib.reload(col)
@@ -142,6 +142,14 @@ def _display(value, quantity, unit, digits=4):
     converted = from_canonical(value, quantity, unit)
     return f"{converted:.{digits}g} {unit}"
 
+
+def _display_step(step, quantity, unit, around=0.5):
+    """Convert a canonical slider increment, including nonlinear composition bases."""
+    return abs(
+        from_canonical(around + step, quantity, unit)
+        - from_canonical(around, quantity, unit)
+    )
+
 # Sidebar Controls
 with st.sidebar:
     st.title("⚗ Column Configuration")
@@ -162,7 +170,7 @@ with st.sidebar:
     z_display = st.slider(
         f"Feed IPA Composition z_F [{z_unit}]",
         from_canonical(0.02, "composition", z_unit), from_canonical(0.65, "composition", z_unit),
-        from_canonical(0.20, "composition", z_unit), display_step(0.01, "composition", z_unit, 0.20),
+        from_canonical(0.20, "composition", z_unit), _display_step(0.01, "composition", z_unit, 0.20),
     )
     z_F = to_canonical(z_display, "composition", z_unit)
     P_unit = _unit_select("Column-pressure unit", "pressure", "column_pressure_unit", st)
@@ -267,9 +275,9 @@ with st.expander("🔐 Degree-of-Freedom Budget Locker (Exactly 2 Specifications
             curr_display = from_canonical(curr_val, quantity, unit)
             if is_locked:
                 if spec == 'x_D':
-                    new_display = st.slider("x_D value", from_canonical(float(z_F + 0.01), quantity, unit), from_canonical(float(x_azeo - 0.005), quantity, unit), from_canonical(float(np.clip(curr_val, z_F + 0.01, x_azeo - 0.005)), quantity, unit), display_step(0.005, quantity, unit, curr_val), label_visibility="collapsed")
+                    new_display = st.slider("x_D value", from_canonical(float(z_F + 0.01), quantity, unit), from_canonical(float(x_azeo - 0.005), quantity, unit), from_canonical(float(np.clip(curr_val, z_F + 0.01, x_azeo - 0.005)), quantity, unit), _display_step(0.005, quantity, unit, curr_val), label_visibility="collapsed")
                 elif spec == 'x_B':
-                    new_display = st.slider("x_B value", from_canonical(0.001, quantity, unit), from_canonical(float(z_F - 0.005), quantity, unit), from_canonical(float(np.clip(curr_val, 0.001, z_F - 0.005)), quantity, unit), display_step(0.005, quantity, unit, curr_val), label_visibility="collapsed")
+                    new_display = st.slider("x_B value", from_canonical(0.001, quantity, unit), from_canonical(float(z_F - 0.005), quantity, unit), from_canonical(float(np.clip(curr_val, 0.001, z_F - 0.005)), quantity, unit), _display_step(0.005, quantity, unit, curr_val), label_visibility="collapsed")
                 elif spec == 'R':
                     new_display = st.slider("R value", 0.5, 15.0, float(max(0.5, curr_display)), 0.1, label_visibility="collapsed")
                 elif spec in ['Rec_LK', 'Rec_HK']:
