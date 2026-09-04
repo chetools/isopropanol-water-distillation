@@ -26,12 +26,10 @@ def _convert(values, quantity, unit):
 def _layout(title, x_title, y_title, x_range=None, square=False):
     """Shared dark layout; the figure carries its own title so exports match.
 
-    Square plots (McCabe–Thiele) use the same numeric range on x and y so
-    the diagram is 1:1 in *data*.  They do **not** use ``scaleanchor``:
-    Plotly pins that constraint in pixel space, and after Streamlit chart
-    fullscreen closes the cartesian domain collapses to a postage stamp
-    inside a full-size frame.  Equal ranges without a pixel lock survive
-    the resize.
+    Square plots (McCabe–Thiele) share one numeric range on x and y.  The
+    1:1 *pixel* aspect is enforced in CSS on the chart container, including
+    Streamlit fullscreen, not with Plotly ``scaleanchor`` — that lock is
+    what collapsed the subplot to a postage stamp after leaving fullscreen.
     """
     xaxis = dict(
         title=dict(text=f"<b>{x_title}</b>", font=dict(size=15, color=theme.TEXT_MUTED)),
@@ -68,10 +66,12 @@ def _layout(title, x_title, y_title, x_range=None, square=False):
         font=dict(family=theme.FONT_STACK, size=13, color=theme.TEXT),
         # The bottom margin has to clear the axis title *and* the wrapped
         # horizontal legend beneath it, or the two overlap on square plots.
-        margin=dict(l=72, r=28, t=72, b=150),
+        # Square charts keep tighter, more even margins so the cartesian
+        # domain stays close to 1:1 inside the CSS square container.
+        margin=dict(l=70, r=48, t=72, b=88) if square else dict(l=72, r=28, t=72, b=150),
         legend=dict(
             orientation="h",
-            yanchor="top", y=-0.16,
+            yanchor="top", y=-0.18 if square else -0.16,
             xanchor="center", x=0.5,
             font=dict(size=12, color=theme.TEXT),
             bgcolor="rgba(0,0,0,0)",

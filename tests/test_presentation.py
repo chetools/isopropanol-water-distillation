@@ -54,6 +54,13 @@ def test_square_plotly_layout_does_not_pixel_lock_the_axes():
     assert layout["yaxis"].get("constrain") != "domain"
 
 
+def test_app_css_keeps_mccabe_square_in_fullscreen():
+    css = theme.app_css()
+    assert "st-key-xy_" in css
+    assert "stFullScreenFrame" in css
+    assert "aspect-ratio: 1 / 1" in css
+
+
 def test_app_css_defines_every_class_the_ui_emits():
     css = theme.app_css()
     for klass in ("metric-card", "metric-title", "metric-value", "metric-sub",
